@@ -762,6 +762,16 @@ function rowT(x=['', '', '']){ return `<div class="r"><input aria-label="Núm." 
 function rowP(x=['', '']){ return `<div class="r"><input aria-label="Nom" value="${esc(x[0])}"><input aria-label="Instrument" value="${esc(x[1])}"><button class="btn ghost" type="button" data-del-row aria-label="Treu">×</button></div>`; }
 const FIELDS = [['titol','Títol','wide'],['any','Any'],['barcode','Codi de barres'],['catno','Núm. de catàleg'],['segell','Segell'],['edicio','Edició / país'],['classificacio','La meva nota'],['clasamg','Nota AllMusic'],['genere','Gènere'],['estil','Estil'],['qualitat','Qualitat'],['bitrate','Bitrate'],['usuari','Usuari'],['data','Data d\'alta'],['notes','Notes','wide']];
 let pendingCover = undefined;
+// suggeriments en català per omplir les caselles (el navegador no proposa el que s'hi havia escrit abans)
+const SUGG = {qualitat:['bona','excel·lent','normal','regular','mitjana','dolenta','distorsionada','saturada','so fluix','sorolls','mal ripejada'],
+  notes:['En directe','EP','Acústic','Instrumental','Inèdit']};
+const QUALITAT_CA = {buena:'bona',bueno:'bona',media:'mitjana',mala:'dolenta',excelente:'excel·lent',distorsionado:'distorsionada',saturado:'saturada',ruidos:'sorolls','sonido flojo':'so fluix','mal ripeado':'mal ripejada'};
+function suggeriments(k){
+  if(SUGG[k]) return SUGG[k];
+  if(k !== 'genere' && k !== 'estil') return null;
+  const c = new Map(); for(const d of discs) if(d[k]) c.set(d[k], (c.get(d[k])||0) + 1);
+  return [...c].sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+}
 const LABELS = Object.fromEntries([...FIELDS.map(([k,l])=>[k,l]), ['temes','Temes'],['interprets','Intèrprets'],['caratula','Caràtula'],['compositors','Compositors'],['segell','Segell'],['catno','Núm. de catàleg'],['suport','Suport']]);
 function renderForm(){
   const d = current || {data:new Date().toISOString().slice(0,10), suport:'mp3'};
@@ -784,7 +794,7 @@ function renderForm(){
       <div class="wide notice">Per a un CD o vinil, n'hi ha prou amb el <b>codi de barres</b> o el <b>número de catàleg</b>. El disc queda «pendent de completar» i s'omple sol amb les dades de Discogs i AllMusic.
         <div class="scan"><label class="btn" for="e_scan">Llegeix el codi d'una foto</label><input id="e_scan" type="file" accept="image/*" capture="environment" hidden><span id="scanMsg"></span></div></div>
       <fieldset class="wide sups"><legend>Suports que tens</legend>${SUPS.map(([k,l])=>`<label><input type="checkbox" id="s_${k}" ${supList(d).includes(k)?'checked':''}> ${l}</label>`).join('')}</fieldset>
-      ${FIELDS.map(([k,l,w])=>`<label class="${w||''}">${l}<input id="e_${k}" value="${esc(d[k]??'')}" ${k==='data'?'type="date"':''}></label>`).join('')}
+      ${FIELDS.map(([k,l,w])=>{ const sg = suggeriments(k); return `<label class="${w||''}">${l}<input id="e_${k}" value="${esc(d[k]??'')}" autocomplete="off" ${k==='data'?'type="date"':''} ${sg?`list="ll_${k}"`:''}>${sg?`<datalist id="ll_${k}">${sg.map(x=>`<option value="${esc(x)}">`).join('')}</datalist>`:''}</label>`; }).join('')}
       <label class="wide" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="e_pend" style="width:auto" ${(d.estat==='pendent'||!current)?'checked':''}> Pendent de completar automàticament</label>
       <div class="wide"><h3 class="sec">Caràtula</h3>
         <div class="coveredit">${sleeveHTML(d,true)}
@@ -863,7 +873,7 @@ async function onSave(e){
       var reanomenat = true;
     }
     const rec = {artista: String(artista)};
-    for(const [k] of FIELDS){ const v = $('#e_'+k).value.trim(); rec[k] = v || null; }
+    for(const [k] of FIELDS){ let v = $('#e_'+k).value.trim(); if(k==='qualitat') v = QUALITAT_CA[v.toLowerCase()] || v; rec[k] = v || null; }
     const known = SUPS.map(x=>x[0]); const extra = current ? supList(current).filter(s=>!known.includes(s)) : [];
     rec.suport = [...SUPS.filter(([k])=>$('#s_'+k).checked).map(x=>x[0]), ...extra].join(', ') || null;
     rec.temes = readRows('#rowsT',3).map((x,i)=>[x[0]||String(i+1), x[1], x[2], '', 0, 0]);

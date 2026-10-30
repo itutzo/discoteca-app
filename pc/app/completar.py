@@ -11,7 +11,7 @@
 Regles: només omple camps buits, mai no toca la classificació personal ni les notes,
 i marca tot el que afegeix com a «automàtic» perquè ho puguis revisar.
 """
-import argparse, datetime, json, os, re, sys, time
+import argparse, datetime, json, os, re, shutil, sys, time
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -500,6 +500,53 @@ def marca_reintents_allmusic():
     log(f'AllMusic: {n} discos marcats per tornar-hi a provar')
 
 
+# Textos en castellà de les entrades antigues, en català. Només es canvien els valors que coincideixen
+# exactament (sense distingir majúscules): la resta de textos que hagis escrit no es toquen.
+QUALITAT_CA = {
+    'buena': 'bona', 'bueno': 'bona', 'buen': 'bona', 'buens': 'bona', 'bunea': 'bona', 'bguena': 'bona',
+    'media': 'mitjana', 'mala': 'dolenta', 'excelente': 'excel·lent', 'distorsionado': 'distorsionada',
+    'saturado': 'saturada', 'ruidos': 'sorolls', 'sonido flojo': 'so fluix',
+    'mal ripeado': 'mal ripejada', 'mal rippeado': 'mal ripejada',
+}
+NOTES_CA = {
+    'directo': 'En directe', 'live': 'En directe', 'disco directo': 'Disc en directe',
+    'disco en directo': 'Disc en directe', 'album en directo': 'Àlbum en directe',
+    'acoustic': 'Acústic', 'unreleased': 'Inèdit',
+    'bajando torrent': 'baixant torrent', 'se oye flojo': 'se sent fluix',
+    'ultima se oye mal 21-7-14 hay q bajarlo de nuevo': "l'última se sent malament 21-7-14, cal tornar-lo a baixar",
+    'libro 2001 discos': 'Llibre 2001 discos', 'bajando nuevo 320': 'baixant-ne un de nou a 320',
+    'bajando nuevo a 320': 'baixant-ne un de nou a 320', '10 mal': 'la 10 malament',
+    'falta tema 11': 'falta el tema 11', 'mal ripeado': 'mal ripejat', 'buscar mas discos': 'buscar més discos',
+    'buscar mas pasar carlos': 'buscar-ne més, passar a Carlos',
+    'distorsionado bajando otra version': 'distorsionat, baixant una altra versió', 'bajando nuevo': 'baixant-ne un de nou',
+    'disco de rarezas solo en vinilo': 'Disc de rareses només en vinil',
+    'la 4 mal ripeaada, bajando nuevo': 'la 4 mal ripejada, baixant-ne un de nou', 'bajando a 320': 'baixant a 320',
+    'miembro de storyville': 'membre de Storyville', 'suena un poco flojo': 'sona una mica fluix',
+    'descargando otro': 'baixant-ne un altre',
+}
+
+
+def tradueix_catala():
+    """Passa al català la qualitat i les notes que encara són en castellà (també les que arribin del mòbil).
+    El primer cop guarda una còpia de discs.json a dades\\copies\\catala-discs-abans.json."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n = 0
+        for d in discs:
+            for camp, dicc in (('qualitat', QUALITAT_CA), ('notes', NOTES_CA)):
+                v = d.get(camp)
+                nou = dicc.get(str(v).strip().lower()) if isinstance(v, str) else None
+                if nou and nou != v:
+                    d[camp] = nou
+                    n += 1
+        if n:
+            copia = os.path.join(comu.COPIES, 'catala-discs-abans.json')
+            if not os.path.exists(copia):
+                shutil.copy2(os.path.join(comu.DADES, 'discs.json'), copia)
+            desa('discs.json', discs)
+            log(f'Català: {n} textos de les entrades traduïts')
+
+
 def tanda(mode, n, id_=None):
     artistes = llegeix('artistes.json', {})
     discs = llegeix('discs.json', [])
@@ -872,6 +919,10 @@ def main():
         comu.aplica_canvis_mobil()
     except Exception as e:
         log(f'Error incorporant canvis del mòbil: {e!r}')
+    try:
+        tradueix_catala()
+    except Exception as e:
+        log(f'Català: error {e!r}')
     try:
         unifica_variables()
     except Exception as e:
