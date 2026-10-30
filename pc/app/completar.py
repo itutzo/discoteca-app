@@ -898,7 +898,9 @@ def mateix_disc(a1, t1, a2, t2):
         return False
     ta, tb = net_titol(t1), net_titol(t2)
     if not ta or not tb:
-        return False
+        # títols fets només de signes («****» dels Greenhornes): han de ser idèntics i del mateix artista
+        return not ta and not tb and N(a1) == N(a2) and str(t1 or '').strip() == str(t2 or '').strip() != ''
+
     if N(a1) == N(a2):
         return ta == tb or (len(ta) > 6 and SequenceMatcher(None, ta, tb).ratio() > 0.92)
     return sim(a1, a2) > 0.85 and (ta == tb or SequenceMatcher(None, ta, tb).ratio() > 0.9)
