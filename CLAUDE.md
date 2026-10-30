@@ -18,7 +18,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - `completar.py`: completa dades automàticament. Té els modes `nit` (el de la tasca diària de les 14:30), `tot`, `pendents`, `disc`, `discogs`, `nas`, `duplicats` i `perfil`. Cada tanda és de 300 discos com a mínim.
 - `fonts.py`:
   - **AllMusic** sempre amb Playwright i el **Chrome** instal·lat (`channel='chrome'`, finestra fora de la pantalla), perquè bloqueja els altres clients.
-  - **Discogs** per l'API amb token, **Last.fm** (`getsimilar`, `getinfo` i `gettoptags`) i **Apple Music** (HTML).
+  - **Discogs** per l'API amb token, **Last.fm** (`getsimilar`, `getinfo`, `gettoptags` i `album.getinfo` per a les durades) i **Apple Music** (HTML).
   - **MusicBrainz** (API oberta, 1 consulta per segon, User-Agent amb l'adreça del repositori) quan AllMusic no dona el disc: any, gèneres, compositors (relacions de *work*), intèrprets i caràtula de Cover Art Archive. AllMusic bloqueja l'accés automàtic des del 28/10/2026 (403): no s'ha d'intentar esquivar.
 - `comu.py`:
   - Rutes i configuració (`%USERPROFILE%\.discoteca\config.ini`, **fora** de Dropbox, amb els tokens de Discogs i Last.fm).
@@ -41,7 +41,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 
 ## Normes de l'Ignasi (obligatòries)
 - **No sobreescriure mai** cap camp que ell hagi omplert. L'automatisme només omple els camps buits. **No omplir mai** `classificacio` (la seva nota) ni `notes`.
-- **Bitrate:** si és fix, el valor (`192`, `320`); si és variable, `VBR ~<mitjana>`; i `Flac`. Es calcula a partir de la mida dels arxius dividida per la durada dels temes, **sense obrir ni descarregar els àudios** (el NAS és Synology on-demand).
+- **Bitrate:** si és fix, el valor (`192`, `320`); si és variable, `VBR ~<mitjana>`; i `Flac`. Si els MP3 ja són al PC, es llegeix només la seva capçalera (uns pocs kB: bitrate fix o mitjana VBR exacta). Si són «a demanda» (atributs de Windows OFFLINE/RECALL), **no s'obren ni es descarreguen** (el NAS és Synology on-demand): es calcula la mida dels arxius dividida per la durada dels temes (AllMusic, Discogs, MusicBrainz i, si no n'hi ha, Last.fm `album.getinfo`). El camp `br: 3` marca els discos ja provats amb aquest mètode.
 - **NAS:** `C:\SynologyMusic\Mi Musica`, amb carpetes de nom «Artista - Any - Àlbum». Si una carpeta es reanomena, el disc antic l'adopta. Les carpetes esborrades es guarden a `ignorats.carpetes`.
 - **Duplicats:** es queda una sola entrada, la que té més fonts d'internet i més dades, i fusiona els camps de l'usuari. Els noms bons són els de la carpeta que existeix al NAS.
 - Només **Chrome**, mai Edge.

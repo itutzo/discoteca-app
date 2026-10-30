@@ -226,12 +226,13 @@ def completa(d, artistes, estils_meus):
             d['interprets'] = P
             auto.add('interprets'); canvis.append('interprets')
 
-    # 4b. Bitrate estimat: mida dels MP3 del NAS (sense descarregar-los) / durada dels temes
+    # 4b. Bitrate: de la capçalera dels MP3 que ja són al PC; si no, mida de l'arxiu / durada dels temes
     variable = d.get('bitrate') == 'VBR'        # sabem que és variable però encara no en tenim la mitjana
     if (not d.get('bitrate') or variable) and d.get('carpeta'):
-        d['br'] = 2          # ja s'ha provat amb el mètode nou
+        d['br'] = 3          # ja s'ha provat amb el mètode nou
         try:
-            br = bitrate_estimat(d, (am or {}).get('temes') or [], (dg or {}).get('temes') or [], variable, ref_mb)
+            br = bitrate_estimat(d, (am or {}).get('temes') or [], (dg or {}).get('temes') or [], variable, ref_mb,
+                                 lambda: fonts.lastfm_temes(nom_art, titol, LFM) if nom_art and titol else [])
             if br:
                 d['bitrate'] = br
                 auto.add('bitrate'); canvis.append('bitrate')
@@ -280,10 +281,105 @@ def segons(t):
 ESTANDARD = [96, 112, 128, 160, 192, 224, 256, 320]
 
 
-def bitrate_estimat(d, temes_am, temes_dg, variable=False, temes_mb=()):
-    """Bitrate dels MP3 del NAS sense obrir-los: mida de l'arxiu (només es llegeix la mida) / durada del tema.
+# MP3 (MPEG-1 i 2/2.5, capa III): kbps per índex i freqüències de mostreig
+KBPS = {1: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+        2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)}
+HZ = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+# Windows: arxius «a demanda» (Synology Drive, OneDrive...) que encara no s'han baixat al PC
+NO_LOCAL = 0x1000 | 0x40000 | 0x400000        # OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS
+
+
+def _trama(b, i):
+    """Capçalera de trama MP3 a la posició i: (kbps, Hz, mostres per trama, llargada, versió, mono) o None."""
+    if i + 4 > len(b) or b[i] != 0xFF or b[i + 1] & 0xE0 != 0xE0:
+        return None
+    ver, capa = b[i + 1] >> 3 & 3, b[i + 1] >> 1 & 3
+    ib, ihz = b[i + 2] >> 4, b[i + 2] >> 2 & 3
+    if ver == 1 or capa != 1 or ib in (0, 15) or ihz == 3:
+        return None
+    m1 = ver == 3
+    kbps, hz = KBPS[1 if m1 else 2][ib], HZ[ver][ihz]
+    mostres = 1152 if m1 else 576
+    llarg = (144 if m1 else 72) * kbps * 1000 // hz + (b[i + 2] >> 1 & 1)
+    return kbps, hz, mostres, llarg, m1, b[i + 3] >> 6 == 3
+
+
+def capcalera_mp3(ruta, mida):
+    """Qualitat real d'un MP3 que ja és al PC, llegint només la capçalera (uns pocs kB, mai l'àudio sencer).
+    Torna (kbps, segons, fix) o None si no s'entén."""
+    with open(ruta, 'rb') as f:
+        cap = f.read(10)
+        inici = 0
+        if cap[:3] == b'ID3' and len(cap) == 10:          # etiqueta ID3v2 (pot dur la caràtula): se salta
+            inici = 10 + (cap[6] << 21 | cap[7] << 14 | cap[8] << 7 | cap[9]) + (10 if cap[5] & 0x10 else 0)
+        f.seek(inici)
+        b = f.read(16384)
+    for i in range(min(len(b) - 4, 8192)):
+        t = _trama(b, i)
+        if not t:
+            continue
+        kbps, hz, mostres, llarg, m1, mono = t
+        seg = _trama(b, i + llarg)
+        if not seg or seg[1] != hz:              # una sincronia falsa: cal que la trama següent també encaixi
+            continue
+        o = i + 4 + ((17 if mono else 32) if m1 else (9 if mono else 17))
+        etiq = b[o:o + 4]
+        if etiq in (b'Xing', b'Info') and len(b) >= o + 16:
+            flags = int.from_bytes(b[o + 4:o + 8], 'big')
+            trames = int.from_bytes(b[o + 8:o + 12], 'big') if flags & 1 else 0
+            octets = int.from_bytes(b[o + 12:o + 16], 'big') if flags & 1 and flags & 2 else 0
+            if trames:
+                s = trames * mostres / hz
+                octets = octets or (mida - inici - i)
+                if etiq == b'Info':                   # LAME en mode fix: la trama d'informació du el bitrate
+                    return kbps, s, True
+                return octets * 8 / s / 1000, s, False
+        if b[i + 36:i + 40] == b'VBRI' and len(b) >= i + 58:          # capçalera de Fraunhofer
+            octets = int.from_bytes(b[i + 46:i + 50], 'big')
+            trames = int.from_bytes(b[i + 50:i + 54], 'big')
+            if trames:
+                s = trames * mostres / hz
+                return octets * 8 / s / 1000, s, False
+        # sense capçalera VBR: fix si les trames següents tenen el mateix bitrate
+        j, vistos = i, set()
+        for _ in range(6):
+            t2 = _trama(b, j)
+            if not t2:
+                break
+            vistos.add(t2[0])
+            j += t2[3]
+        if len(vistos) == 1:
+            return kbps, (mida - inici - i) * 8 / (kbps * 1000), True
+        return None
+    return None
+
+
+def bitrate_capcaleres(mp3, variable=False):
+    """Bitrate del disc a partir de la capçalera dels MP3 que ja són al PC (no en descarrega cap)."""
+    llegits = []
+    for ruta, mida, local in mp3:
+        if not local:
+            continue
+        try:
+            r = capcalera_mp3(ruta, mida)
+        except OSError:
+            r = None
+        if r:
+            llegits.append(r)
+    if not llegits or len(llegits) < min(3, len(mp3)):
+        return None
+    fixos = {round(k) for k, _, fix in llegits if fix}
+    if not variable and len(fixos) == 1 and all(fix for *_, fix in llegits):
+        return str(fixos.pop())
+    kbps = sum(k * s for k, s, _ in llegits) / sum(s for _, s, _ in llegits)
+    return f'VBR ~{round(kbps)}'
+
+
+def bitrate_estimat(d, temes_am, temes_dg, variable=False, temes_mb=(), temes_extra=None):
+    """Bitrate dels MP3 del NAS. Primer, la capçalera dels arxius que ja són al PC (exacte, només uns kB);
+    si són «a demanda» i no s'han baixat, no s'obren: mida de l'arxiu / durada del tema.
     Cada arxiu s'aparella amb el seu tema pel número o pel nom, així funciona encara que hi hagi
-    temes extra o en faltin."""
+    temes extra o en faltin. temes_extra és una funció que dona més durades (Last.fm) si cal."""
     carpeta = os.path.join(CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica'), d['carpeta'])
     if not os.path.isdir(carpeta):
         return None
@@ -294,12 +390,27 @@ def bitrate_estimat(d, temes_am, temes_dg, variable=False, temes_mb=()):
             if ext == '.flac':
                 flac = True
             if ext == '.mp3':
-                mp3.append((f, os.stat(os.path.join(root, f)).st_size))
+                st = os.stat(os.path.join(root, f))
+                local = not getattr(st, 'st_file_attributes', 0) & NO_LOCAL
+                mp3.append((f, st.st_size, os.path.join(root, f), local))
     if flac and not mp3:
         return 'Flac'
     if not mp3:
         return None
-    for ref in (temes_am, temes_dg, temes_mb):
+    br = bitrate_capcaleres([(r, m, l) for _, m, r, l in mp3], variable)
+    if br:
+        return br
+    mp3 = [(f, mida) for f, mida, _, _ in mp3]
+    refs = [temes_am, temes_dg, temes_mb]
+    if temes_extra:
+        refs.append(temes_extra)
+    for ref in refs:
+        if callable(ref):
+            try:
+                ref = ref() or []
+            except Exception as e:
+                log(f'  Last.fm (durades): error {e!r}')
+                ref = []
         temes = [(str(t.get('titol') or ''), segons(t.get('durada'))) for t in ref]
         temes = [x for x in temes if x[1] > 0]
         if not temes:
@@ -521,7 +632,7 @@ def tanda(mode, n, id_=None):
             falten.sort(key=lambda d: d['proc'])
             # discos ja repassats que es van quedar sense bitrate: es tornen a provar un cop
             sense_br = [d for d in discs if d.get('carpeta') and (not d.get('bitrate') and d.get('proc') or d.get('bitrate') == 'VBR')
-                        and d.get('br') != 2 and d.get('estat') != 'pendent']
+                        and (d.get('br') or 0) < 3 and d.get('estat') != 'pendent']
             # discos que AllMusic no va deixar consultar (403): un altre intent, com a molt un cop al dia
             am_err = [d for d in discs if d.get('am_error') and d.get('estat') != 'pendent' and d.get('proc', '') < AVUI]
             ja = {id(x) for x in pend + sense_br}
