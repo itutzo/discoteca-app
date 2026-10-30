@@ -893,6 +893,9 @@ async function onSave(e){
     rec.temes = readRows('#rowsT',3).map((x,i)=>[x[0]||String(i+1), x[1], x[2], '', 0, 0]);
     rec.interprets = readRows('#rowsP',2).map(x=>[x[0], x[1], 0]);
     if(current){ const old = trackList(current); rec.temes = rec.temes.map(x => { const o = old.find(y=>y[1]===x[1]); return o ? [x[0],x[1],x[2],o[3],o[4],o[5]] : x; }); }
+    // en ordre de pista (i de cara o CD), encara que les files s'hagin escrit desordenades
+    const pista = x => /^\d+$/.test(String(x[0]).trim()) ? +x[0] : Infinity;
+    rec.temes = rec.temes.map((x,i)=>[x,i]).sort((a,b)=>String(a[0][3]||'').localeCompare(String(b[0][3]||''), undefined, {numeric:true}) || pista(a[0])-pista(b[0]) || a[1]-b[1]).map(x=>x[0]);
     const id = current ? current.id : 'n' + Date.now();
     rec.id = id;
     if(pendingCover){ await api('/api/caratula?id=' + encodeURIComponent(id), {method:'POST', body: pendingCover}); rec.caratula = true; rec.cv = Date.now(); }
