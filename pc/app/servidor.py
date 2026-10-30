@@ -4,7 +4,7 @@ Només escolta el mateix PC (127.0.0.1): cap altre aparell de la xarxa ni d'inte
 El mòbil i la tauleta fan servir la versió web (itutzo.github.io/discoteca), que llegeix del Dropbox.
 A més, només accepta peticions fetes des de la mateixa Discoteca: una altra pàgina web oberta
 al navegador no pot esborrar ni canviar res."""
-import json, os, sys, shutil, subprocess, threading, time, webbrowser, urllib.parse
+import json, os, sys, shutil, subprocess, threading, time, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -239,10 +239,10 @@ def main():
         SERVIDOR['srv'] = srv
     except OSError:
         # ja està obert: només obrim el navegador
-        webbrowser.open(f'http://localhost:{PORT}/')
+        comu.obre_navegador(f'http://localhost:{PORT}/')
         return
     print(f'Discoteca oberta a http://localhost:{PORT}/  (tanca aquesta finestra per aturar-la)')
-    threading.Timer(0.8, lambda: webbrowser.open(f'http://localhost:{PORT}/')).start()
+    threading.Timer(0.8, lambda: comu.obre_navegador(f'http://localhost:{PORT}/')).start()
     srv.serve_forever()
 
 

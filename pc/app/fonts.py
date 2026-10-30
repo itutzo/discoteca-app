@@ -14,7 +14,8 @@ UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like
       'Chrome/130.0 Safari/537.36')
 _ultim = {}
 PAUSA = {'www.allmusic.com': 2.0, 'api.discogs.com': 1.2, 'www.discogs.com': 3.0,
-         'ws.audioscrobbler.com': 0.25, 'music.apple.com': 2.0}
+         'ws.audioscrobbler.com': 0.25, 'music.apple.com': 2.0,
+         'musicbrainz.org': 1.1, 'coverartarchive.org': 0.5}
 
 
 try:
@@ -77,10 +78,20 @@ def get(url, headers=None, json_=False, binari=False, intents=3):
             raise
 
 
+class AMBloquejat(ErrorHTTP):
+    """AllMusic ha refusat diverses peticions seguides: no s'hi insisteix durant aquesta tanda."""
+    def __init__(self):
+        super().__init__(403)
+
+
 class NavegadorAM:
     """AllMusic només deixa entrar navegadors reals: fem servir el Chrome del PC, amb un perfil a part i fora de la pantalla."""
+    MAX_REFUSOS = 3
+
     def __init__(self):
         self.pw = self.br = self.pg = None
+        self.refusos = 0
+        self.bloquejat = False
 
     def obre(self):
         if self.pg:
@@ -109,20 +120,45 @@ class NavegadorAM:
             self.pg = None
 
     def text(self, url):
-        self.obre()
-        if not self.pg:
-            raise ErrorHTTP(403)
-        host = 'www.allmusic.com'
-        espera = PAUSA[host] - (time.time() - _ultim.get(host, 0))
-        if espera > 0:
-            time.sleep(espera + random.random() * 0.5)
-        _ultim[host] = time.time()
-        r = self.pg.evaluate('async u => { const r = await fetch(u); return [r.status, await r.text()]; }', url)
-        if r[0] == 404:
-            return None
-        if r[0] >= 400:
-            raise ErrorHTTP(r[0])
-        return r[1]
+        if self.bloquejat:
+            raise AMBloquejat()
+        for intent in range(2):
+            self.obre()
+            if not self.pg:
+                raise ErrorHTTP(403)
+            host = 'www.allmusic.com'
+            espera = PAUSA[host] - (time.time() - _ultim.get(host, 0))
+            if espera > 0:
+                time.sleep(espera + random.random() * 0.5)
+            _ultim[host] = time.time()
+            try:
+                r = self.pg.evaluate('async u => { const r = await fetch(u); return [r.status, await r.text()]; }', url)
+            except Exception as e:
+                # la finestra de Chrome s'ha tancat o penjat: s'obre de nou un sol cop
+                if intent == 0 and re.search(r'closed|crash', repr(e), re.I):
+                    self.tanca_finestra()
+                    continue
+                raise
+            if r[0] == 404:
+                return None
+            if r[0] in (403, 429):
+                # AllMusic no vol respostes automàtiques: després de uns quants refusos seguits ho deixem estar
+                self.refusos += 1
+                if self.refusos >= self.MAX_REFUSOS:
+                    self.bloquejat = True
+                    log(f'  AllMusic: {self.refusos} refusos seguits; no es torna a provar fins a la propera tanda')
+                    raise AMBloquejat()
+            if r[0] >= 400:
+                raise ErrorHTTP(r[0])
+            self.refusos = 0
+            return r[1]
+
+    def tanca_finestra(self):
+        try:
+            if self.br: self.br.close()
+        except Exception:
+            pass
+        self.br = self.pg = None
 
     def tanca(self):
         try:
@@ -133,7 +169,6 @@ class NavegadorAM:
 
 
 _am_nav = NavegadorAM()
-_am_bloquejat = {'v': False}
 
 
 def sopa(url):
@@ -166,8 +201,13 @@ def allmusic(artista, titol):
     if not best:
         return None
     url = re.sub(r'^https?://[^/]+', '', best['url'])
-    mw = re.search(r'mw\d+', url).group(0)
+    mw = re.search(r'mw\d+', url)
+    if not mw:
+        return None
+    mw = mw.group(0)
     d = sopa(AM + url)
+    if not d:
+        return None
     out = {'url': AM + url}
     dt = d.select_one('.release-date span') or d.select_one('.release-date')
     out['data'] = re.sub(r'^Release Date\s*', '', txt(dt))
@@ -306,6 +346,76 @@ class Discogs:
                 break
             pag += 1
         return out
+
+
+# ---------------- MusicBrainz ----------------
+# API oberta i gratuïta. Demana com a màxim una consulta per segon i un User-Agent que identifiqui l'aplicació.
+MB = 'https://musicbrainz.org/ws/2'
+MB_UA = {'User-Agent': 'Discoteca/1.0 ( https://github.com/itutzo/discoteca-app )', 'Accept': 'application/json'}
+MB_COMPOSICIO = ('composer', 'writer', 'lyricist')
+MB_MUSICS = ('instrument', 'vocal', 'performer', 'conductor')     # la resta (productor, enginyer...) no són intèrprets
+
+
+def _mb(path, **q):
+    q['fmt'] = 'json'
+    return get(MB + path + '?' + urllib.parse.urlencode(q), headers=MB_UA, json_=True)
+
+
+def _lucene(t):
+    return '"' + re.sub(r'([\\"])', r'\\\1', str(t)) + '"'
+
+
+def _mb_credit(rel):
+    """Una relació d'artista de MusicBrainz com a crèdit (nom, rol), amb el mateix format que AllMusic i Discogs."""
+    nom = (rel.get('artist') or {}).get('name') or ''
+    attrs = [a.capitalize() for a in rel.get('attributes') or [] if a not in ('additional', 'guest', 'solo')]
+    rol = {'vocal': 'Vocals', 'instrument': 'Instruments', 'performer': 'Performer'}.get(rel.get('type'), rel.get('type', '').title())
+    rol = ', '.join(attrs) if attrs and rel.get('type') in ('instrument', 'vocal') else rol
+    if 'guest' in (rel.get('attributes') or []):
+        rol += ', Guest'
+    return nom, rol
+
+
+def musicbrainz(artista, titol):
+    """Disc a MusicBrainz: any, gèneres, temes amb durada i compositors, intèrprets i caràtula (Cover Art Archive)."""
+    m = re.match(r'^(.*),\s*(the|los|las|el|la|les)$', str(artista or '').strip(), re.I)
+    art_cerca = f'{m.group(2)} {m.group(1)}' if m else artista             # «Cure, The» -> «The Cure»
+    r = _mb('/release-group/', query=f'releasegroup:{_lucene(titol)} AND artist:{_lucene(art_cerca)}', limit=10) or {}
+    art_ok = lambda rg: any(N(artista) in N(c.get('name') or (c.get('artist') or {}).get('name')) or
+                            N(c.get('name') or '') in N(artista) for c in rg.get('artist-credit') or [] if c.get('name'))
+    cands = [x for x in r.get('release-groups') or [] if art_ok(x)]
+    cands.sort(key=lambda x: (x.get('primary-type') != 'Album', -int(x.get('score') or 0)))
+    rg = next((x for x in cands if NT(x.get('title')) == NT(titol)), None) or \
+        next((x for x in cands if NT(titol) in NT(x.get('title')) or NT(x.get('title')) in NT(titol)), None)
+    if not rg:
+        return None
+    g = _mb(f"/release-group/{rg['id']}", inc='genres+releases') or {}
+    out = {'url': f"https://musicbrainz.org/release-group/{rg['id']}",
+           'any': (g.get('first-release-date') or rg.get('first-release-date') or '')[:4],
+           'generes': [x['name'] for x in sorted(g.get('genres') or [], key=lambda x: -int(x.get('count') or 0))],
+           'caratula': f"https://coverartarchive.org/release-group/{rg['id']}/front-500",
+           'temes': [], 'credits': []}
+    # l'edició oficial més antiga és la que té els crèdits de l'original
+    rels = sorted(g.get('releases') or [], key=lambda x: (x.get('status') != 'Official', not x.get('date'), x.get('date') or ''))
+    if rels:
+        rel = _mb(f"/release/{rels[0]['id']}",
+                  inc='recordings+artist-credits+artist-rels+recording-level-rels+work-rels+work-level-rels') or {}
+        out['credits'] = [_mb_credit(x) for x in rel.get('relations') or [] if x.get('artist') and x.get('type') in MB_MUSICS]
+        for med in rel.get('media') or []:
+            for t in med.get('tracks') or []:
+                rec = t.get('recording') or {}
+                comp = []
+                for x in rec.get('relations') or []:
+                    if x.get('artist') and x.get('type') in MB_MUSICS:
+                        out['credits'].append(_mb_credit(x))
+                    for w in ((x.get('work') or {}).get('relations') or []) if x.get('type') == 'performance' else []:
+                        if w.get('type') in MB_COMPOSICIO and (w.get('artist') or {}).get('name'):
+                            comp.append(w['artist']['name'])
+                ms = t.get('length') or rec.get('length') or 0
+                out['temes'].append({'n': t.get('number') or t.get('position') or '', 'titol': t.get('title') or rec.get('title') or '',
+                                     'compositors': list(dict.fromkeys(comp)),
+                                     'durada': f'{ms // 60000}:{ms // 1000 % 60:02d}' if ms else ''})
+    return out
 
 
 # ---------------- Last.fm ----------------
