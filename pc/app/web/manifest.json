@@ -1,0 +1,1 @@
+{"name": "Discoteca", "short_name": "Discoteca", "start_url": "/", "display": "standalone", "background_color":"#dcc596", "theme_color": "#8a1c1c", "icons": [{"src": "/icona-180.png", "sizes": "180x180", "type": "image/png"}, {"src": "/icona-512.png", "sizes": "512x512", "type": "image/png"}]}

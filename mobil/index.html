@@ -1,0 +1,1125 @@
+<!doctype html>
+<html lang="ca"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src https://api.dropboxapi.com https://content.dropboxapi.com https://musicbrainz.org https://www.wikidata.org https://ca.wikipedia.org https://es.wikipedia.org https://en.wikipedia.org; object-src 'none'; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discoteca de l'Ignasi</title>
+<link rel="icon" href="favicon.png"><link rel="apple-touch-icon" href="icona-180.png"><link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Discoteca"><meta name="theme-color" content="#8a1c1c">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: barra de cerca enganxosa + calaix de portades (graella) + fitxa lateral que llisca */
+:root{
+  --bg:#dcc596; --surface:#efe3c6; --sunk:#d1b67e; --fg:#2a1f12; --muted:#6e5a3a; --line:#c2a56c;
+  --accent:#8a1c1c; --accent-fg:#ffffff; --accent-soft:#eed0b8; --ok:#2f6b3a; --warn:#9a6a12;
+  --f-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --f-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --r:6px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#151213; --surface:#1f1b1c; --sunk:#292425; --fg:#efe9e6; --muted:#a39893; --line:#3a3335;
+  --accent:#d0504a; --accent-fg:#1a0d0d; --accent-soft:#3a1d1d; --ok:#7cc48a; --warn:#e0b25a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#151213; --surface:#1f1b1c; --sunk:#292425; --fg:#efe9e6; --muted:#a39893; --line:#3a3335;
+  --accent:#d0504a; --accent-fg:#1a0d0d; --accent-soft:#3a1d1d; --ok:#7cc48a; --warn:#e0b25a; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 var(--f-body);margin:0}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--surface)}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+@media (max-width:620px){header.top{position:static}}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--surface);border-bottom:1px solid var(--line)}
+.top .row1{display:flex;align-items:center;gap:16px;padding-block:12px 8px;flex-wrap:wrap}
+.brand{font-family:var(--f-display);font-weight:800;font-size:30px;letter-spacing:.02em;text-transform:uppercase;line-height:1;margin:0;color:var(--accent)}
+.brand small{display:block;font-family:var(--f-mono);font-weight:400;font-size:11px;letter-spacing:.08em;color:var(--muted);margin-top:4px}
+.search{flex:1 1 280px;min-width:0;display:flex;align-items:center;gap:8px;background:var(--sunk);border-radius:var(--r);padding:0 12px}
+.search input{border:0;background:transparent;padding:10px 0;width:100%;min-width:0;outline:none}
+.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:8px 14px;cursor:pointer;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.danger{color:var(--accent)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;padding-block:0 12px;align-items:center}
+.filters select{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:6px 8px;max-width:100%}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:4px 12px;cursor:pointer;font-size:13px;font-family:var(--f-mono);text-transform:uppercase;letter-spacing:.06em}
+.chip[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.count{margin-left:auto;font-family:var(--f-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+main{padding-block:20px 48px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:20px 16px}
+.card{background:none;border:0;padding:0;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px;min-width:0}
+.sleeve{aspect-ratio:1;width:100%;max-width:100%;background:var(--sunk);border-radius:3px;overflow:hidden;position:relative;box-shadow:0 1px 0 var(--line)}
+.sleeve img{width:100%;height:100%;object-fit:cover;display:block}
+.sleeve .ph{position:absolute;inset:0;display:grid;place-items:center;padding:10px;text-align:center;font-family:var(--f-display);font-weight:600;font-size:18px;line-height:1.05;color:var(--muted);text-transform:uppercase}
+.sleeve .fmts{position:absolute;left:6px;top:6px;display:flex;gap:3px;flex-wrap:wrap}
+.sleeve .fmt{background:var(--surface);color:var(--fg);font:500 10px/1 var(--f-mono);letter-spacing:.08em;padding:4px 6px;border-radius:3px;text-transform:uppercase}
+.sleeve .fmt.phys{background:var(--accent);color:var(--accent-fg)}
+.card:hover .sleeve{outline:2px solid var(--accent);outline-offset:2px}
+.card .t{font-weight:600;line-height:1.25;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.card .a{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .m{font-family:var(--f-mono);font-size:11px;color:var(--muted);display:flex;gap:8px;font-variant-numeric:tabular-nums}
+.more{display:flex;justify-content:center;padding-top:28px}
+.empty{padding:48px 0;color:var(--muted);text-align:center}
+
+/* Fitxa */
+.scrim{position:fixed;inset:0;background:rgb(0 0 0 / .45);z-index:20}
+aside.sheet{position:fixed;top:0;right:0;bottom:0;width:min(760px,100%);background:var(--surface);z-index:21;overflow-y:auto;box-shadow:-8px 0 30px rgb(0 0 0 / .2);
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+.sheet .bar{position:sticky;top:0;background:var(--surface);display:flex;gap:8px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);z-index:2}
+.sheet .bar .sp{flex:1}
+.sheet .body{padding:20px}
+.hero{display:grid;grid-template-columns:minmax(0,260px) minmax(0,1fr);gap:24px}
+@media (max-width:620px){.hero{grid-template-columns:1fr}}
+.hero .sleeve{box-shadow:0 10px 30px rgb(0 0 0 / .25)}
+.hero h2{font-family:var(--f-display);font-weight:800;font-size:40px;line-height:1;margin:0 0 6px;text-transform:uppercase;text-wrap:balance}
+.hero .who{font-size:18px;color:var(--accent);font-weight:600;background:none;border:0;padding:0;cursor:pointer;text-align:left}
+.score{display:flex;gap:16px;margin:16px 0;flex-wrap:wrap}
+.score div{display:flex;flex-direction:column}
+.score b{font-family:var(--f-display);font-size:34px;line-height:1;font-variant-numeric:tabular-nums}
+.score span{font:500 10px/1.4 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+dl.facts{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin:0;font-size:14px}
+dl.facts dt{font:500 11px/1.9 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+dl.facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
+h3.sec{font:500 12px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:28px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+ol.tracks{list-style:none;margin:0;padding:0}
+ol.tracks li{display:grid;grid-template-columns:2.2em minmax(0,1fr) auto;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line);align-items:baseline}
+ol.tracks .n{font-family:var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+ol.tracks .c{color:var(--muted);font-size:13px;text-align:right}
+.tag{font:500 10px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:2px 5px;margin-left:6px;color:var(--muted)}
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 20px;font-size:14px}
+.people div{min-width:0}.people span{color:var(--muted)}
+.others{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:12px}
+.others .card .t{font-size:12px}
+.notice{background:var(--accent-soft);border-radius:var(--r);padding:10px 14px;font-size:14px;margin-bottom:16px}
+
+/* Formulari */
+form.edit{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px 16px}
+form.edit label{display:flex;flex-direction:column;gap:4px;font:500 11px/1.3 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);min-width:0}
+form.edit input,form.edit select,form.edit textarea{font:15px var(--f-body);letter-spacing:0;text-transform:none;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px;width:100%;min-width:0}
+form.edit .wide{grid-column:1/-1}
+ul.disc{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:6px 20px}
+ul.disc .ign{border:0;background:none;color:var(--muted);cursor:pointer;margin-left:6px;padding:2px 6px;border-radius:4px;font-size:13px}
+ul.disc .ign:hover{color:var(--accent);background:var(--accent-soft)}
+ul.disc.recs li{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0}
+ul.disc.recs .rq{font-size:12.5px}
+.chip.recbtn{border-color:var(--accent);color:var(--accent);font-weight:600}
+.chip.recbtn:hover{background:var(--accent-soft)}
+.tag.nou{background:var(--accent-soft);color:var(--accent)}
+.fit{display:inline-block;font-family:var(--f-mono);font-size:12px;font-weight:700;color:var(--accent-fg);background:var(--accent);border-radius:4px;padding:1px 6px;margin-right:4px}
+.ident{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
+ul.barres{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 18px}
+ul.barres li{display:grid;grid-template-columns:120px 1fr;align-items:center;gap:8px;font-size:13px;text-transform:capitalize}
+ul.barres i{display:block;height:8px;border-radius:4px;background:var(--accent);opacity:.8}
+ul.disc li{padding:6px 0;border-bottom:1px dashed var(--line);min-width:0}
+ul.disc a{color:var(--fg);font-weight:600;text-decoration:none}
+ul.disc a:hover{color:var(--accent);text-decoration:underline}
+.who2{color:var(--muted);font-size:13px}
+.srcs{font-size:13px;color:var(--muted);margin-top:20px}.srcs a{color:var(--accent)}
+.tools{position:relative}.tools summary{list-style:none}.tools summary::-webkit-details-marker{display:none}
+.tools .menu{position:absolute;right:0;top:calc(100% + 6px);background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 8px 24px rgb(0 0 0 / .18);display:flex;flex-direction:column;min-width:280px;z-index:8;padding:6px}
+.tools .menu .btn{text-align:left}
+.estat{font:500 12px/1.3 var(--f-mono);color:var(--accent);margin-left:auto}
+.estat + .count{margin-left:12px}
+ol.passos{padding-left:20px;display:flex;flex-direction:column;gap:8px;max-width:60ch}
+p.url code{font:13px var(--f-mono);word-break:break-all}
+.login{position:fixed;inset:0;background:var(--bg);z-index:50;display:grid;place-items:center;padding:24px}
+.lbox{max-width:360px;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center}
+.lbox input{width:100%;padding:10px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);font:15px var(--f-body)}
+.mnota{font-size:12px;color:var(--muted);padding:6px 12px;margin:0;max-width:260px}
+#scrim2{z-index:30}#info{z-index:31;width:min(700px,100%)}
+button.link{background:none;border:0;padding:0;font:inherit;color:var(--fg);font-weight:600;cursor:pointer;text-align:left}
+button.link:hover{color:var(--accent);text-decoration:underline}
+.people button.link{font-weight:400}
+.ihero{display:grid;grid-template-columns:minmax(0,160px) minmax(0,1fr);gap:20px;align-items:start}
+.ihero img{width:100%;border-radius:4px}
+@media (max-width:520px){.ihero{grid-template-columns:1fr}.ihero img{max-width:200px}}
+.carrega{color:var(--muted)}
+.scan{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
+fieldset.sups{border:1px solid var(--line);border-radius:var(--r);display:flex;gap:18px;flex-wrap:wrap;padding:10px 14px}
+fieldset.sups legend{font:500 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 4px}
+fieldset.sups label{flex-direction:row;align-items:center;gap:6px;font:15px var(--f-body);letter-spacing:0;text-transform:none;color:var(--fg)}
+fieldset.sups input{width:auto}
+.rows{display:flex;flex-direction:column;gap:6px}
+.rows .r{display:grid;grid-template-columns:3.5em minmax(0,2fr) minmax(0,1.3fr) auto;gap:6px}
+.rows.p .r{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) auto}
+.rows input{background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:6px 8px;width:100%;min-width:0}
+.coveredit{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.coveredit .sleeve{width:120px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 18px;border-radius:var(--r);z-index:40;font-weight:500}
+@media (prefers-reduced-motion:no-preference){aside.sheet{animation:in .18s ease-out}@keyframes in{from{transform:translateX(24px);opacity:.6}}}
+</style>
+
+</head><body>
+<header class="top">
+  <div class="wrap">
+    <div class="row1">
+      <h1 class="brand">Discoteca<small id="stats">Carregant el catàleg…</small></h1>
+      <label class="search" for="q"><span aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Cerca artista, títol, tema o músic…" autocomplete="off"></label>
+      <div class="actions">
+        <details class="tools"><summary class="btn">Eines</summary>
+          <div class="menu">
+            <button class="btn ghost" type="button" data-run="pendents">Completa els pendents</button>
+            <button class="btn ghost" type="button" data-run="tot">Completa la col·lecció (una tanda)</button>
+            <button class="btn ghost" type="button" data-run="discogs">Sincronitza amb Discogs (CD i vinils)</button>
+            <button class="btn ghost" type="button" data-run="nas">Busca discos nous al NAS</button>
+            <button class="btn ghost" type="button" data-run="duplicats">Busca i ajunta discos duplicats</button>
+            <button class="btn ghost" type="button" data-run="perfil">Calcula la meva identitat musical</button>
+            <button class="btn ghost local-only" type="button" id="mobilBtn">Obre-la al mòbil o la tauleta</button>
+            <button class="btn ghost local-only" type="button" id="aturaBtn">Tanca la Discoteca</button>
+            <button class="btn ghost" type="button" id="surtBtn">Surt del compte de Dropbox</button>
+            <p class="mnota">Les dades d'internet (AllMusic, Discogs…) les completa el PC cada dia a les 14:30.</p>
+          </div>
+        </details>
+        <button class="btn primary" id="newBtn" type="button" hidden>Afegeix disc</button></div>
+    </div>
+    <div class="filters">
+      <div class="chips" role="group" aria-label="Suport">
+        <button class="chip" type="button" data-sup="" aria-pressed="true">Tots</button>
+        <button class="chip" type="button" data-sup="mp3" aria-pressed="false">MP3</button>
+        <button class="chip" type="button" data-sup="cd" aria-pressed="false">CD</button>
+        <button class="chip" type="button" data-sup="lp" aria-pressed="false">Vinil</button>
+        <button class="chip" type="button" data-sup="fis" aria-pressed="false">Físics</button>
+        <button class="chip" type="button" data-sup="pend" aria-pressed="false">Pendents</button>
+        <button class="chip recbtn" type="button" id="recsBtn">★ Per a tu</button>
+      </div>
+      <select id="fEstil" aria-label="Estil"><option value="">Tots els estils</option></select>
+      <select id="fNota" aria-label="Classificació mínima">
+        <option value="">Qualsevol nota</option><option value="9">9 o més</option><option value="8">8 o més</option><option value="7">7 o més</option>
+      </select>
+      <select id="fOrdre" aria-label="Ordre">
+        <option value="artista">Per artista</option><option value="any">Per any</option><option value="titol">Per títol</option><option value="nota">Millor nota</option><option value="alta">Últims afegits</option>
+      </select>
+      <span class="estat" id="estat" hidden></span><span class="count" id="count"></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" hidden>Cap disc coincideix amb la cerca.</div>
+  <div class="more"><button class="btn" id="moreBtn" type="button" hidden>Mostra'n més</button></div>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet" id="sheet" hidden aria-modal="true" role="dialog" aria-labelledby="sheetTitle"></aside>
+<div class="scrim" id="scrim2" hidden></div>
+<aside class="sheet info" id="info" hidden aria-modal="true" role="dialog"></aside>
+<div class="toast" id="toast" hidden></div>
+<div class="login" id="login" hidden>
+  <div class="lbox">
+    <img src="icona-180.png" alt="" width="96" height="96">
+    <h1 class="brand">Discoteca</h1>
+    <p>Entra amb el teu compte de Dropbox per obrir el catàleg. Només cal fer-ho un cop en aquest aparell.</p>
+    <button class="btn primary" type="button" id="entraBtn">Entra amb Dropbox</button>
+    <div id="codiBox" hidden>
+      <p>Dropbox t'ha mostrat un codi: copia'l, torna aquí i enganxa'l.</p>
+      <input id="codiIn" placeholder="Enganxa el codi aquí" autocomplete="off">
+      <button class="btn primary" type="button" id="codiBtn">Continua</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const urlSegur = u => /^https?:\/\//i.test(String(u||'')) ? esc(u) : '#';   // mai «javascript:»
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const PAGE = 120;
+
+let artistes = {}, discs = [], byId = new Map(), newArtists = {};
+const assets = true, canWrite = true;
+let shown = PAGE, current = null, editing = false;
+const state = {q:'', sup:'', estil:'', nota:'', ordre:'artista'};
+
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.hidden=false; clearTimeout(toast.h); toast.h=setTimeout(()=>t.hidden=true,2600); }
+
+/* ---------- Portades ---------- */
+/* ---------- Dropbox: les dades són a Dropbox\Personal\Discoteca ---------- */
+const DBX_KEY = 'eym3tcbw043ubzr';
+const ARREL = '/Personal/Discoteca';
+const REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+const LS = { get(k){ try{ return localStorage.getItem(k); }catch{ return null; } },
+             set(k, v){ try{ localStorage.setItem(k, v); }catch{} },
+             del(k){ try{ localStorage.removeItem(k); }catch{} } };
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+
+async function pkce(){
+  const v = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const c = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)));
+  return [v, c];
+}
+async function entra(){
+  const [v, c] = await pkce();
+  LS.set('dbx_verifier', v);
+  const p = new URLSearchParams({client_id: DBX_KEY, response_type: 'code', code_challenge: c,
+    code_challenge_method: 'S256', token_access_type: 'offline'});
+  if(standalone()){
+    // dins l'app de la pantalla d'inici: Dropbox mostra un codi que s'enganxa aquí
+    window.open('https://www.dropbox.com/oauth2/authorize?' + p, '_blank');
+    $('#codiBox').hidden = false;
+  } else {
+    p.set('redirect_uri', REDIRECT);
+    location.href = 'https://www.dropbox.com/oauth2/authorize?' + p;
+  }
+}
+async function canviaCodi(code, ambRedirect){
+  const p = new URLSearchParams({grant_type: 'authorization_code', code, client_id: DBX_KEY, code_verifier: LS.get('dbx_verifier') || ''});
+  if(ambRedirect) p.set('redirect_uri', REDIRECT);
+  const r = await fetch('https://api.dropboxapi.com/oauth2/token', {method: 'POST', body: p});
+  if(!r.ok) throw new Error('No s\'ha pogut entrar a Dropbox');
+  desaToken(await r.json());
+}
+function desaToken(j){
+  if(j.refresh_token) LS.set('dbx_refresh', j.refresh_token);
+  LS.set('dbx_access', j.access_token);
+  LS.set('dbx_exp', String(Date.now() + (j.expires_in - 120) * 1000));
+}
+async function token(){
+  if(LS.get('dbx_access') && Number(LS.get('dbx_exp')) > Date.now()) return LS.get('dbx_access');
+  const rt = LS.get('dbx_refresh');
+  if(!rt) throw Object.assign(new Error('login'), {login: true});
+  const r = await fetch('https://api.dropboxapi.com/oauth2/token', {method: 'POST',
+    body: new URLSearchParams({grant_type: 'refresh_token', refresh_token: rt, client_id: DBX_KEY})});
+  if(!r.ok){ LS.del('dbx_refresh'); throw Object.assign(new Error('login'), {login: true}); }
+  desaToken(await r.json());
+  return LS.get('dbx_access');
+}
+const argHeader = o => JSON.stringify(o).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+async function rpc(endpoint, body){
+  const r = await fetch('https://api.dropboxapi.com/2/' + endpoint, {method: 'POST',
+    headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if(!r.ok){ const t = await r.text(); throw Object.assign(new Error(t), {status: r.status, text: t}); }
+  return r.json();
+}
+async function baixa(path){
+  const r = await fetch('https://content.dropboxapi.com/2/files/download', {method: 'POST',
+    headers: {Authorization: 'Bearer ' + await token(), 'Dropbox-API-Arg': argHeader({path: ARREL + path})}});
+  if(r.status === 409) return null;            // no existeix
+  if(!r.ok) throw new Error('Dropbox ' + r.status);
+  return r;
+}
+async function puja(path, data, tipus){
+  const r = await fetch('https://content.dropboxapi.com/2/files/upload', {method: 'POST',
+    headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/octet-stream',
+      'Dropbox-API-Arg': argHeader({path: ARREL + path, mode: 'overwrite', mute: true})},
+    body: data});
+  if(!r.ok) throw new Error('Dropbox ' + r.status);
+  return r.json();
+}
+const llegeixJSON = async (path, defecte) => { const r = await baixa(path); return r ? r.json() : defecte; };
+
+/* Els canvis del mòbil es desen en arxius petits a dades/mobil/ i el PC els incorpora al catàleg */
+let canvisMobil = [];
+async function llistaCanvis(){
+  try{
+    let res = await rpc('files/list_folder', {path: ARREL + '/dades/mobil'});
+    let e = res.entries;
+    while(res.has_more){ res = await rpc('files/list_folder/continue', {cursor: res.cursor}); e = e.concat(res.entries); }
+    e = e.filter(x => x['.tag'] === 'file' && x.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name));
+    return Promise.all(e.map(x => llegeixJSON('/dades/mobil/' + x.name, null)));
+  }catch(err){ if(err.status === 409) return []; throw err; }
+}
+function aplicaCanvis(dades, ig, canvis){
+  for(const c of canvis){
+    if(!c) continue;
+    if(c.tipus === 'artista') dades.artistes[c.id] = c.nom;
+    else if(c.tipus === 'esborra') dades.discs = dades.discs.filter(d => String(d.id) !== String(c.id));
+    else if(c.tipus === 'ignora'){ (ig[c.llista] = ig[c.llista] || []).includes(c.clau) || ig[c.llista].push(c.clau); }
+    else if(c.tipus === 'disc'){
+      let d = dades.discs.find(x => String(x.id) === String(c.id));
+      if(!d){ d = {id: c.id}; dades.discs.push(d); }
+      for(const [k, v] of Object.entries(c.patch)){ if(v === null) delete d[k]; else d[k] = v; }
+    }
+  }
+}
+async function desaCanvi(c){
+  c.quan = new Date().toISOString();
+  const nom = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.json';
+  await puja('/dades/mobil/' + nom, JSON.stringify(c));
+  canvisMobil.push(c);
+}
+
+let cacheDades = null, cacheIgnorats = null, cacheRecs = null;
+const api = async (path, opts) => {
+  const u = new URL(path, location.href);
+  const p = u.pathname.replace(/^.*\/api\//, '/api/');
+  if(p === '/api/dades'){
+    const [dades, artistes, ig, canvis] = await Promise.all([llegeixJSON('/dades/discs.json', []), llegeixJSON('/dades/artistes.json', {}),
+      llegeixJSON('/dades/ignorats.json', {artistes: [], discos: []}), llistaCanvis()]);
+    cacheDades = {discs: dades, artistes}; cacheIgnorats = ig; canvisMobil = canvis;
+    aplicaCanvis(cacheDades, cacheIgnorats, canvis);
+    return cacheDades;
+  }
+  if(p === '/api/lastfm') return llegeixJSON('/dades/lastfm.json', {});
+  if(p === '/api/recs-tots'){
+    if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
+    return await cacheRecs;
+  }
+  if(p.startsWith('/api/recs/')){
+    if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
+    return (await cacheRecs)[decodeURIComponent(p.slice(10))] || {};
+  }
+  if(p === '/api/ignorats') return cacheIgnorats || {artistes: [], discos: []};
+  if(p === '/api/caratula'){
+    const id = u.searchParams.get('id');
+    await puja('/caratules/' + id + '.jpg', opts.body);
+    thumbs.forEach((v, k) => { if(k.startsWith(id + '|')) thumbs.delete(k); });
+    return {ok: true};
+  }
+  if(p === '/api/estat') return {};
+  throw new Error('no disponible al mòbil');
+};
+const postJSON = async (path, obj) => {
+  if(path === '/api/disc'){
+    const orig = discs.find(x => String(x.id) === String(obj.id));
+    const patch = {};
+    for(const [k, v] of Object.entries(obj)) if(!orig || JSON.stringify(orig[k]) !== JSON.stringify(v)) patch[k] = v;
+    if(orig) for(const k of Object.keys(orig)) if(!(k in obj) && !k.startsWith('_') && !['proc','no_trobat','carpeta','fonts','discogs_release'].includes(k)) patch[k] = null;
+    if(obj.reintenta){ patch.proc = null; patch.no_trobat = null; }
+    await desaCanvi({tipus: 'disc', id: obj.id, patch, nou: !orig});
+    return {ok: true, id: obj.id};
+  }
+  if(path === '/api/esborra'){ await desaCanvi({tipus: 'esborra', id: obj.id}); return {ok: true}; }
+  if(path === '/api/artista'){
+    if(obj.id){ await desaCanvi({tipus: 'artista', id: obj.id, nom: obj.nom}); artistes[obj.id] = obj.nom; return {ok: true, id: obj.id}; }
+    for(const [k, v] of Object.entries(artistes)) if(norm(v) === norm(obj.nom)) return {ok: true, id: k};
+    const id = 'a' + Date.now();
+    await desaCanvi({tipus: 'artista', id, nom: obj.nom});
+    return {ok: true, id};
+  }
+  if(path === '/api/ignora'){ await desaCanvi({tipus: 'ignora', llista: obj.tipus, clau: obj.clau}); return {ok: true}; }
+  throw new Error('no disponible al mòbil');
+};
+
+/* Caràtules: miniatures de Dropbox, demanades de 25 en 25 */
+const thumbs = new Map(); let cua = [], cuaTimer = null;
+function coverUrl(d, full){
+  if(!d.caratula) return Promise.resolve(null);
+  const k = d.id + '|' + (full ? 'g' : 'p') + '|' + (d.cv || '');
+  if(!thumbs.has(k)) thumbs.set(k, new Promise(res => { cua.push({id: d.id, full, res}); clearTimeout(cuaTimer); cuaTimer = setTimeout(buidaCua, 40); }));
+  return thumbs.get(k);
+}
+async function buidaCua(){
+  while(cua.length){
+    const lot = cua.splice(0, 25);
+    try{
+      const r = await fetch('https://content.dropboxapi.com/2/files/get_thumbnail_batch', {method: 'POST',
+        headers: {Authorization: 'Bearer ' + await token(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({entries: lot.map(x => ({path: ARREL + '/caratules/' + x.id + '.jpg', format: 'jpeg',
+          size: x.full ? 'w640h480' : 'w256h256', mode: 'fitone_bestfit'}))})});
+      const j = r.ok ? await r.json() : {entries: []};
+      lot.forEach((x, i) => { const e = j.entries[i]; x.res(e && e['.tag'] === 'success' ? 'data:image/jpeg;base64,' + e.thumbnail : null); });
+    }catch{ lot.forEach(x => x.res(null)); }
+  }
+}
+
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if(!e.isIntersecting) return; io.unobserve(e.target);
+  const k = e.target.dataset.id; const d = byId.get(k) || byId.get(Number(k));
+  if(d) setSleeve(e.target, d, e.target.dataset.full === '1');
+}), {rootMargin:'600px'});
+async function setSleeve(el, d, full){
+  const url = await coverUrl(d, full);
+  if(url){ const img=new Image(); img.alt=''; img.decoding='async'; img.src=url; img.onload=()=>{ const ph=el.querySelector('.ph'); if(ph) ph.remove(); }; el.prepend(img); }
+}
+function sleeveHTML(d, full){
+  const L = supList(d);
+  const fmt = L.length ? `<span class="fmts">${L.map(s=>`<span class="fmt ${PHYS.includes(s)?'phys':''}">${esc(s)}</span>`).join('')}</span>` : '';
+  return `<div class="sleeve" data-id="${esc(d.id)}" data-full="${full?1:0}"><div class="ph">${esc(d.titol||'')}</div>${fmt}</div>`;
+}
+
+/* ---------- Dades ---------- */
+const PHYS = ['cd','lp'];
+const SUPS = [['mp3','MP3'],['flac','FLAC'],['cd','CD'],['lp','Vinil (LP)']];
+const supList = d => [...new Set(norm(d.suport).split(/[\s,;\/+]+/).filter(Boolean).map(x => x==='vinil'||x==='vinilo' ? 'lp' : x))];
+const artName = id => newArtists[id] ?? artistes[id] ?? '';
+function rebuild(){
+  simIdx = null;
+  byId = new Map(discs.map(d => [d.id, d]));
+  for(const d of discs){
+    const t = trackList(d), p = peopleList(d);
+    d._s = norm([artName(d.artista), d.titol, d.any, d.estil, d.genere, d.notes, t.map(x=>x[1]).join(' '), p.map(x=>x[0]).join(' ')].join(' '));
+  }
+  const estils = [...new Set(discs.map(d=>d.estil).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ca'));
+  const sel = $('#fEstil'), keep = sel.value;
+  sel.innerHTML = '<option value="">Tots els estils</option>' + estils.map(e=>`<option>${esc(e)}</option>`).join('');
+  sel.value = keep;
+  const fis = discs.filter(d=>supList(d).some(s=>PHYS.includes(s))).length;
+  $('#stats').textContent = `${discs.length.toLocaleString('ca')} gravacions · ${new Set(discs.map(d=>d.artista)).size.toLocaleString('ca')} artistes · ${fis} en format físic`;
+}
+/* ---------- Recomanacions (dins la col·lecció) ---------- */
+let simIdx = null;
+const tok = s => norm(s).replace(/\(.*?\)/g,'').trim();
+const styleSet = d => new Set([d.estil, d.genere].filter(Boolean).map(tok));
+function buildSim(){
+  const byPerson = new Map(), byArtist = new Map();
+  for(const d of discs){
+    const ppl = new Set(peopleList(d).map(x=>tok(x[0])).filter(n=>n.length>2));
+    const comp = new Set(trackList(d).flatMap(x=>String(x[2]||'').split(/[\/,&]+/)).map(tok).filter(n=>n.length>2));
+    d._ppl = ppl; d._comp = comp; d._sty = styleSet(d);
+    for(const n of ppl){ if(!byPerson.has(n)) byPerson.set(n, []); byPerson.get(n).push(d); }
+    const a = String(d.artista);
+    if(!byArtist.has(a)) byArtist.set(a, {ppl:new Map(), sty:new Map(), years:[], best:null});
+    const A = byArtist.get(a);
+    ppl.forEach(n=>A.ppl.set(n,(A.ppl.get(n)||0)+1)); d._sty.forEach(n=>A.sty.set(n,(A.sty.get(n)||0)+1));
+    if(+d.any) A.years.push(+d.any);
+    if(!A.best || num(d.classificacio) > num(A.best.classificacio)) A.best = d;
+  }
+  simIdx = {byPerson, byArtist};
+}
+const num = v => parseFloat(String(v??'').replace(',','.')) || 0;
+const yearSim = (a,b) => (+a && +b) ? Math.max(0, 1 - Math.abs(a-b)/12) : 0;
+function similarDiscs(d, n=5){
+  if(!simIdx) buildSim();
+  const score = new Map();
+  const add = (x, v) => { if(x.artista===d.artista || x.id===d.id) return; score.set(x, (score.get(x)||0) + v); };
+  for(const p of d._ppl){ const L = simIdx.byPerson.get(p)||[]; if(L.length < 60) L.forEach(x=>add(x, 3)); }
+  for(const x of discs){
+    if(x.artista===d.artista) continue;
+    let v = 0;
+    if(d.estil && x.estil && tok(d.estil)===tok(x.estil)) v += 2;
+    if(d.genere && x.genere && tok(d.genere)===tok(x.genere)) v += 0.5;
+    for(const c of d._comp) if(x._comp.has(c)) { v += 1.5; break; }
+    if(v){ v += yearSim(+d.any, +x.any)*1.5 + num(x.classificacio)/10; add(x, v); }
+  }
+  const out = [], seen = new Set();
+  for(const [x] of [...score].sort((a,b)=>b[1]-a[1])){ if(seen.has(x.artista)) continue; seen.add(x.artista); out.push(x); if(out.length===n) break; }
+  return out;
+}
+function similarArtists(d, n=5){
+  if(!simIdx) buildSim();
+  const me = simIdx.byArtist.get(String(d.artista)); if(!me) return [];
+  const myYear = me.years.length ? me.years.reduce((a,b)=>a+b)/me.years.length : 0;
+  const res = [];
+  for(const [a, A] of simIdx.byArtist){
+    if(a === String(d.artista)) continue;
+    let v = 0;
+    for(const [p] of me.ppl) if(A.ppl.has(p) && (simIdx.byPerson.get(p)||[]).length < 60) v += 3;
+    let inter = 0, uni = new Set([...me.sty.keys(), ...A.sty.keys()]).size;
+    for(const k of me.sty.keys()) if(A.sty.has(k)) inter++;
+    v += uni ? 4*inter/uni : 0;
+    if(!v) continue;
+    const y = A.years.length ? A.years.reduce((p,q)=>p+q)/A.years.length : 0;
+    v += yearSim(myYear, y)*1.5 + Math.min(A.years.length, 6)*0.1;
+    res.push([a, v, A.best]);
+  }
+  return res.sort((x,y)=>y[1]-x[1]).slice(0,n);
+}
+function trackList(d){ return d.temes || []; }
+function peopleList(d){ return d.interprets || []; }
+
+function filtered(){
+  const words = norm(state.q).split(/\s+/).filter(Boolean);
+  let r = discs.filter(d => {
+    const L = supList(d);
+    if(state.sup === 'pend'){ if(d.estat !== 'pendent') return false; }
+    else if(state.sup === 'fis'){ if(!L.some(s=>PHYS.includes(s))) return false; }
+    else if(state.sup && !L.includes(state.sup)) return false;
+    if(state.estil && d.estil !== state.estil) return false;
+    if(state.nota && !(parseFloat(String(d.classificacio).replace(',','.')) >= Number(state.nota))) return false;
+    return words.every(w => d._s.includes(w));
+  });
+  const A = d => norm(artName(d.artista)).replace(/^the /,'');
+  const cmp = {
+    artista:(a,b)=>A(a).localeCompare(A(b),'ca') || (a.any||'').localeCompare(b.any||''),
+    any:(a,b)=>(b.any||'').localeCompare(a.any||'') || A(a).localeCompare(A(b),'ca'),
+    titol:(a,b)=>norm(a.titol).localeCompare(norm(b.titol),'ca'),
+    nota:(a,b)=>(parseFloat(String(b.classificacio).replace(',','.'))||0)-(parseFloat(String(a.classificacio).replace(',','.'))||0),
+    alta:(a,b)=>(b.data||'').localeCompare(a.data||'')
+  }[state.ordre];
+  return r.sort(cmp);
+}
+function cardHTML(d){
+  return `<button class="card" type="button" data-open="${esc(d.id)}">${sleeveHTML(d,false)}
+    <span class="t">${esc(d.titol||'(sense títol)')}</span><span class="a">${esc(artName(d.artista))}</span>
+    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.classificacio?`<span>★ ${esc(d.classificacio)}</span>`:''}</span></button>`;
+}
+function render(){
+  const list = filtered();
+  $('#count').textContent = `${list.length.toLocaleString('ca')} resultats`;
+  $('#empty').hidden = list.length > 0;
+  const g = $('#grid');
+  g.innerHTML = list.slice(0, shown).map(cardHTML).join('');
+  g.querySelectorAll('.sleeve').forEach(el => io.observe(el));
+  $('#moreBtn').hidden = list.length <= shown;
+}
+
+/* ---------- Fitxa ---------- */
+function openSheet(id, edit=false){
+  current = id == null ? null : (byId.get(id) ?? byId.get(Number(id)));
+  editing = edit || current == null;
+  $('#sheet').hidden = false; $('#scrim').hidden = false; document.body.style.overflow='hidden';
+  editing ? renderForm() : renderSheet();
+}
+function closeSheet(){ recsOpen = false; $('#sheet').hidden = true; $('#scrim').hidden = true; document.body.style.overflow=''; current=null; editing=false; }
+function fact(k, v){ return v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : ''; }
+function renderSheet(){
+  const d = current, sh = $('#sheet');
+  const t = trackList(d), p = peopleList(d);
+  const others = discs.filter(x => x.artista === d.artista && x.id !== d.id).sort((a,b)=>(a.any||'').localeCompare(b.any||''));
+  const sides = new Set(t.map(x=>x[3]).filter(Boolean));
+  sh.innerHTML = `
+  <div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button><span class="sp"></span>
+    ${canWrite?'<button class="btn" type="button" data-edit>Edita</button>':''}</div>
+  <div class="body">
+    ${d.revisar?'<div class="notice">Completat automàticament: revisa-ho quan puguis. Si tot és correcte, edita i desa per treure aquest avís.</div>':''}
+    ${d.estat==='pendent'?'<div class="notice">Pendent de completar: el procés automàtic hi afegirà les dades que falten.</div>':''}
+    ${d.auto?.length?`<div class="notice">Dades omplertes automàticament, per revisar: ${esc(d.auto.map(k=>LABELS[k]||k).join(', '))}.</div>`:''}
+    <div class="hero">${sleeveHTML(d,true)}
+      <div style="min-width:0">
+        <h2 id="sheetTitle">${esc(d.titol||'(sense títol)')}</h2>
+        <button class="who" type="button" data-artist="${esc(d.artista)}">${esc(artName(d.artista))}</button>
+        <button class="btn ghost" type="button" data-info="${esc(artName(d.artista))}" style="margin-left:6px;padding:4px 10px">Biografia i discografia</button>
+        <div class="score">
+          <div><b>${d.classificacio?esc(d.classificacio):'—'}</b><span>La meva nota</span></div>
+          ${d.clasamg && d.clasamg!=='sin'?`<div><b>${esc(d.clasamg)}</b><span>AllMusic</span></div>`:''}
+          ${d.any?`<div><b>${esc(d.any)}</b><span>Any</span></div>`:''}
+        </div>
+        <dl class="facts">
+          ${fact('Suport', supList(d).map(s=>(SUPS.find(x=>x[0]===s)||[s,s.toUpperCase()])[1]).join(' · '))}${fact('Bitrate', d.bitrate && (/^\d+$/.test(d.bitrate)? d.bitrate+' kbps' : d.bitrate))}
+          ${fact('Segell', d.segell)}${fact('Núm. de catàleg', d.catno)}${fact('Codi de barres', d.barcode)}${fact('Edició', d.edicio)}
+          ${fact('Gènere', d.genere)}${fact('Estil', d.estil)}${fact('Qualitat', d.qualitat)}
+          ${fact('Usuari', d.usuari)}
+          ${fact('Data d\'alta', d.data && new Date(d.data+'T12:00').toLocaleDateString('ca'))}${fact('Notes', d.notes)}${fact('Carpeta al NAS', d.carpeta)}
+        </dl>
+      </div>
+    </div>
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?x[3]+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
+    ${(()=>{ const sa = similarArtists(d), sd = similarDiscs(d);
+      return (sa.length?`<h3 class="sec">Artistes similars a la teva col·lecció</h3><div class="others">${sa.map(([a,,best])=>`<button class="card" type="button" data-artist="${esc(a)}">${sleeveHTML(best,false)}<span class="t">${esc(artName(a))}</span><span class="a">${esc(best.estil||best.genere||'')}</span></button>`).join('')}</div>`:'')
+        + (sd.length?`<h3 class="sec">Discos similars a la teva col·lecció</h3><div class="others">${sd.map(cardHTML).join('')}</div>`:''); })()}
+    <div id="discover"></div>
+    ${d.fonts?`<p class="srcs">Fonts: ${Object.entries(d.fonts).map(([k,u])=>`<a href="${urlSegur(u)}" target="_blank" rel="noopener">${esc(k==='allmusic'?'AllMusic':k)}</a>`).join(' · ')}</p>`:''}
+    ${others.length?`<h3 class="sec">Altres gravacions de ${esc(artName(d.artista))} · ${others.length}</h3><div class="others">${others.map(cardHTML).join('')}</div>`:''}
+  </div>`;
+  sh.querySelectorAll('.sleeve').forEach(el => io.observe(el));
+  sh.scrollTop = 0;
+  loadDiscover(d);
+}
+const recCache = new Map();
+async function loadDiscover(d){
+  const box = $('#discover'); if(!box) return;
+  const key = String(d.artista);
+  if(!recCache.has(key)) recCache.set(key, api('/api/recs/'+encodeURIComponent(key)).then(x=>x && x.artistes ? x : null).catch(()=>null));
+  const r = await recCache.get(key); if(!r || current !== d) return;
+  const ig = await ignorats();
+  const have = new Set([...Object.values({...artistes, ...newArtists}).map(tok2), ...ig.artistes]);
+  const igD = new Set(ig.discos);
+  const haveD = new Set(discs.map(x=>tok2(artName(x.artista))+'|'+tok2(x.titol)));
+  const sc = x => x.score ?? (x.fonts?.length||0);
+  const rank = L => [...L].map((x,i)=>[x,i]).sort((a,b)=>sc(b[0])-sc(a[0]) || a[1]-b[1]).map(x=>x[0]);
+  const A = rank(r.artistes||[]).filter(x=>!have.has(tok2(x.nom))).slice(0,5);
+  const seen = new Set();
+  const D = rank(r.discos||[]).filter(x=>tok2(x.artista) && !have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
+  const chips = f => (f||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join('');
+  const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
+  box.innerHTML = (A.length?`<h3 class="sec">Per descobrir · artistes</h3><ul class="disc">${A.map(x=>`<li><a href="${am(x.nom)}" target="_blank" rel="noopener">${esc(x.nom)}</a>${chips(x.fonts)}<button class="ign" type="button" data-ign="artistes" data-clau="${esc(tok2(x.nom))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'')
+    + (D.length?`<h3 class="sec">Per descobrir · discos</h3><ul class="disc">${D.map(x=>`<li><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span>${chips(x.fonts)}<button class="ign" type="button" data-ign="discos" data-clau="${esc(tok2(x.artista)+'|'+tok2(x.titol))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'');
+}
+let igCache = null;
+const ignorats = () => igCache || (igCache = api('/api/ignorats').catch(()=>({artistes:[],discos:[]})));
+
+/* ---------- Identitat musical i recomanacions ---------- */
+let recsOpen = false, totsRecs = null, totsLF = null;
+const recsTots = () => totsRecs || (totsRecs = api('/api/recs-tots').catch(() => ({})));
+const dadesLF = () => totsLF || (totsLF = api('/api/lastfm').catch(() => ({})));
+// etiquetes de Last.fm que no diuen res de l'estil
+const SOROLL = new Set(['seen live','favorites','favourites','favorite','favourite','my favorite','love','awesome','beautiful','amazing','cool','good','great','best','all','spotify','under 2000 listeners','albums i own','music','vinyl','male vocalists','female vocalists','male vocalist','female vocalist','singer','band','bands','usa','american','british','uk','english','canadian','australian','german','swedish','finnish','norwegian','spanish','french','italian','japanese','irish','scottish','polish','dutch','danish','brazilian','spain','espana','germany','sweden','finland','norway','england','australia','canada','california','texas','new york','los angeles','seattle','minnesota','indiana','guitar','guitarist','supergroup','00s','90s','80s','70s','60s','10s','2000s','1990s','1980s','1970s']);
+const netTag = t => { t = String(t||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ').trim(); return SOROLL.has(t) || t.length < 2 ? null : t; };
+let IDF = new Map(), NOMS = new Set();   // les etiquetes que té tothom («rock») compten poc; les específiques («stoner rock») molt
+const vectorLF = x => { const v = new Map(); (x?.t||[]).forEach(([t,n]) => { t = netTag(t); if(t && !NOMS.has(tok2(t))) v.set(t, (v.get(t)||0) + (n/100)*(IDF.get(t) ?? 1)); }); return v; };
+function calculaIDF(LF){
+  NOMS = new Set(Object.keys(LF));    // etiquetes que són noms d'artista («led zeppelin») no diuen l'estil
+  const df = new Map(); let N = 0;
+  Object.values(LF).forEach(x => { if(!x?.t?.length) return; N++; new Set(x.t.map(([t]) => netTag(t)).filter(Boolean)).forEach(t => df.set(t, (df.get(t)||0) + 1)); });
+  IDF = new Map([...df].map(([t,n]) => [t, Math.log((N + 1) / (n + 1))]));
+}
+const cosinus = (a, b, nb) => { let s = 0, na = 0; a.forEach((x,k) => { na += x*x; const y = b.get(k); if(y) s += x*y; }); return na && nb ? s/Math.sqrt(na)/nb : 0; };
+const factorFama = n => n == null ? 1 : n < 30000 ? 0.9 : n < 150000 ? 1.1 : 1 / (1 + 0.9*Math.log10(n/150000));
+async function identitat(){
+  const LF = await dadesLF();
+  calculaIDF(LF);
+  const perArt = new Map();
+  for(const d of discs){
+    const n = num(d.classificacio) || 6;
+    const a = String(d.artista);
+    const A = perArt.get(a) || {s:0, n:0, estils:new Map()};
+    A.s += Math.max(0.05, (n - 4) / 6); A.n++;
+    if(d.estil) A.estils.set(d.estil, (A.estils.get(d.estil)||0) + 1);
+    perArt.set(a, A);
+  }
+  // el teu perfil: suma de les etiquetes de cada artista teu, pesat per quants discos en tens i quina nota els poses
+  const perfil = new Map(), estils = new Map(), decades = new Map();
+  let ambLF = 0;
+  perArt.forEach((A, aid) => {
+    A.pes = (A.s / A.n) * Math.sqrt(A.n);
+    A.vec = vectorLF(LF[tok2(artName(aid))]);
+    if(A.vec.size) ambLF++;
+    A.vec.forEach((x, t) => perfil.set(t, (perfil.get(t)||0) + x*A.pes));
+    A.estils.forEach((c, e) => estils.set(e, (estils.get(e)||0) + A.pes*c/A.n));
+  });
+  for(const d of discs){ const y = +d.any; if(y > 1900){ const dc = Math.floor(y/10)*10; decades.set(dc, (decades.get(dc)||0) + Math.max(0.05, ((num(d.classificacio)||6) - 4)/6)); } }
+  const np = Math.sqrt([...perfil.values()].reduce((s,x) => s+x*x, 0));
+  // referència: com encaixen amb el perfil els teus propis artistes preferits
+  const meus = [...perArt.entries()].filter(([,A]) => A.vec.size).map(([aid,A]) => ({aid, A, c:cosinus(A.vec, perfil, np)}));
+  const cs = meus.filter(x => x.A.s/x.A.n >= 0.5).map(x => x.c).sort((a,b) => a-b);
+  const ref = cs.length ? cs[Math.floor(cs.length*0.97)] : 0.5;
+  const encaix = v => Math.min(100, Math.round(100 * cosinus(v, perfil, np) / (ref || 1)));
+  const tot = [...perfil.values()].reduce((s,x) => s+x, 0) || 1;
+  const totD = [...decades.values()].reduce((s,x) => s+x, 0) || 1;
+  return {LF, perArt, perfil, np, encaix, ambLF, total: perArt.size,
+    tags: [...perfil.entries()].sort((a,b) => b[1]-a[1]).slice(0, 12).map(([t,x]) => [t, x/tot]),
+    decades: [...decades.entries()].sort((a,b) => b[1]-a[1]).slice(0, 4).map(([d,x]) => [d, x/totD]),
+    claus: meus.sort((a,b) => b.c*b.A.pes - a.c*a.A.pes).slice(0, 6).map(x => artName(x.aid))};
+}
+async function calculaRecs(){
+  const [R, ig, I] = await Promise.all([recsTots(), ignorats(), identitat()]);
+  const {LF, perArt, encaix} = I;
+  const tinc = new Set(Object.values({...artistes, ...newArtists}).map(tok2));
+  const igA = new Set(ig.artistes), igD = new Set(ig.discos);
+  const cand = new Map(), candD = new Map();
+  let base = 0;
+  for(const [aid, r] of Object.entries(R || {})){
+    const A = perArt.get(String(aid)); if(!A || !r) continue; base++;
+    const nomA = artName(aid), pes = A.s / A.n;
+    const suma = (M, k, x, i, extra) => {
+      const c = M.get(k) || {...extra, ev:0, per:new Map(), fonts:new Set()};
+      c.ev += pes * (x.score ?? (x.fonts?.length||1)) * Math.max(0.3, 1 - i/50);
+      c.per.set(nomA, Math.max(c.per.get(nomA)||0, pes));
+      (x.fonts||[]).forEach(f => c.fonts.add(f));
+      M.set(k, c);
+    };
+    (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k)) suma(cand, k, x, i, {nom:x.nom}); });
+    (r.discos||[]).forEach((x, i) => {
+      const ka = tok2(x.artista), k = ka + '|' + tok2(x.titol);
+      if(ka && !tinc.has(ka) && !igA.has(ka) && !igD.has(k)) suma(candD, k, x, i, {artista:x.artista, titol:x.titol, any:x.any});
+    });
+  }
+  const dec = new Map(I.decades);
+  const puntua = c => {
+    const info = LF[tok2(c.nom || c.artista)];
+    const v = vectorLF(info);
+    c.oients = info?.o ?? null;
+    c.tags = [...v.entries()].sort((a,b) => b[1]-a[1]).slice(0, 3).map(x => x[0]);
+    c.encaix = v.size ? encaix(v) : null;
+    const fit = c.encaix == null ? 0.55 : c.encaix/100;                     // sense dades de Last.fm: prudència
+    const epoca = c.any ? 0.85 + 0.6*(dec.get(Math.floor(+c.any/10)*10) || 0) : 1;
+    c.punts = Math.pow(fit, 3) * (1 + Math.log(1 + c.ev)) * (1 + 0.25*(c.per.size - 1)) * factorFama(c.oients) * epoca;
+    return c;
+  };
+  const ordena = M => [...M.entries()].map(([k,c]) => puntua({...c, k})).filter(c => c.encaix == null || c.encaix >= 55).sort((a,b) => b.punts - a.punts);
+  const A = ordena(cand).slice(0, 25);
+  const perArtista = new Map();
+  const jaA = new Set(A.map(x => x.k));
+  const brossa = /^(image hidden|various artists|varios|unknown|untitled)$/i;
+  const D = ordena(candD).filter(x => !brossa.test(x.artista) && !brossa.test(x.titol) && !jaA.has(tok2(x.artista))).filter(x => { const n = perArtista.get(tok2(x.artista))||0; perArtista.set(tok2(x.artista), n+1); return n < 2; }).slice(0, 25);
+  return {A, D, base, I};
+}
+async function obreRecs(){
+  const sh = $('#sheet'); current = null; editing = false; recsOpen = true;
+  sh.hidden = false; $('#scrim').hidden = false; document.body.style.overflow = 'hidden';
+  if(!sh.querySelector('#recsBody')) sh.innerHTML = `<div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button></div>
+  <div class="body"><h2 id="sheetTitle" class="brand" style="margin-bottom:12px">La teva identitat musical</h2><div id="recsBody"><p class="who2">Calculant…</p></div></div>`;
+  const {A, D, base, I} = await calculaRecs();
+  if(!recsOpen) return;
+  const top = M => [...M.entries()].sort((a,b) => b[1]-a[1]).slice(0, 3).map(x => x[0]);
+  const perque = c => `<span class="who2 rq">Hi coincideixen ${top(c.per).map(esc).join(', ')}${c.per.size > 3 ? ` i ${c.per.size-3} més` : ''}</span>`;
+  const etiq = c => (c.encaix != null ? `<span class="fit" title="Quant s'assembla al teu perfil musical">${c.encaix}%</span>` : '')
+    + c.tags.map(e => `<span class="tag">${esc(e)}</span>`).join('')
+    + (c.oients != null && c.oients < 150000 ? '<span class="tag nou">Poc conegut</span>' : '');
+  const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
+  const ign = (t, k) => `<button class="ign" type="button" data-ign="${t}" data-clau="${esc(k)}" title="Descarta: no me'l tornis a proposar">✕</button>`;
+  const max = I.tags[0]?.[1] || 1;
+  const perfilHTML = I.tags.length ? `<div class="ident">
+      <ul class="barres">${I.tags.map(([t,x]) => `<li><span>${esc(t)}</span><i style="width:${Math.round(100*x/max)}%"></i></li>`).join('')}</ul>
+      <p class="who2">Èpoques: ${I.decades.map(([d,x]) => `<b>${String(d).slice(2)}s</b> ${Math.round(100*x)}%`).join(' · ')}<br>
+      Artistes que et defineixen: ${I.claus.map(esc).join(', ')}</p></div>`
+    : `<p class="notice">Encara no tinc el teu perfil d'estils. Ves a <b>Eines → Calcula la meva identitat musical</b> al PC (tarda uns 40 minuts la primera vegada); si no, es farà a poc a poc cada dia a les 14:30.</p>`;
+  $('#recsBody').innerHTML = perfilHTML
+    + `<p class="who2" style="margin:14px 0 0">Propostes que no tens, ordenades pel % d'encaix amb aquest perfil. Els molt famosos baixen, perquè segurament ja els coneixes. El nom obre la biografia; ✕ el descarta per sempre.</p>`
+    + (!base ? '<p class="notice">Encara no hi ha propostes: es van recollint a mesura que el PC completa els discos.</p>' : '')
+    + (A.length ? `<h3 class="sec">Artistes per a tu · ${A.length}</h3><ul class="disc recs">${A.map(x => `<li><div><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button> ${etiq(x)}<br>${perque(x)}</div>${ign('artistes', x.k)}</li>`).join('')}</ul>` : '')
+    + (D.length ? `<h3 class="sec">Discos per a tu · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
+    + `<p class="who2" style="margin-top:16px">Perfil fet amb ${I.ambLF} dels teus ${I.total} artistes · propostes recollides de ${base}. Cada dia el PC n'hi afegeix més.</p>`;
+}
+async function ignora(tipus, clau){
+  try{ await postJSON('/api/ignora', {tipus, clau}); }catch{ toast('No s\'ha pogut desar.'); return; }
+  const ig = await ignorats(); ig[tipus].push(clau);
+  if(current) loadDiscover(current);
+  if(recsOpen && !$('#sheet').hidden) obreRecs();
+  toast('D\'acord, no te\'l tornaré a proposar');
+}
+const tok2 = s => norm(s).replace(/^the\s+|,\s*the$/,'').replace(/[^a-z0-9]/g,'');
+
+function rowT(x=['', '', '']){ return `<div class="r"><input aria-label="Núm." value="${esc(x[0])}"><input aria-label="Tema" value="${esc(x[1])}"><input aria-label="Compositor" value="${esc(x[2])}"><button class="btn ghost" type="button" data-del-row aria-label="Treu">×</button></div>`; }
+function rowP(x=['', '']){ return `<div class="r"><input aria-label="Nom" value="${esc(x[0])}"><input aria-label="Instrument" value="${esc(x[1])}"><button class="btn ghost" type="button" data-del-row aria-label="Treu">×</button></div>`; }
+const FIELDS = [['titol','Títol','wide'],['any','Any'],['barcode','Codi de barres'],['catno','Núm. de catàleg'],['segell','Segell'],['edicio','Edició / país'],['classificacio','La meva nota'],['clasamg','Nota AllMusic'],['genere','Gènere'],['estil','Estil'],['qualitat','Qualitat'],['bitrate','Bitrate'],['usuari','Usuari'],['data','Data d\'alta'],['notes','Notes','wide']];
+let pendingCover = undefined;
+const LABELS = Object.fromEntries([...FIELDS.map(([k,l])=>[k,l]), ['temes','Temes'],['interprets','Intèrprets'],['caratula','Caràtula'],['compositors','Compositors'],['segell','Segell'],['catno','Núm. de catàleg'],['suport','Suport']]);
+function renderForm(){
+  const d = current || {data:new Date().toISOString().slice(0,10), suport:'mp3'};
+  pendingCover = undefined;
+  const arts = Object.entries({...artistes, ...newArtists}).sort((a,b)=>a[1].localeCompare(b[1],'ca'));
+  const sh = $('#sheet');
+  sh.innerHTML = `
+  <div class="bar"><button class="btn ghost" type="button" data-cancel>Cancel·la</button><span class="sp"></span>
+    ${current?'<button class="btn danger" type="button" data-delete>Esborra</button>':''}
+    <button class="btn primary" type="submit" form="editForm">Desa</button></div>
+  <div class="body">
+    <h2 id="sheetTitle" class="brand" style="margin-bottom:16px">${current?'Edita la gravació':'Nova gravació'}</h2>
+    <div id="confirmDel"></div>
+    <form class="edit" id="editForm">
+      <label class="wide">Artista
+        <select id="e_artista">${arts.map(([id,n])=>`<option value="${esc(id)}" ${String(d.artista)===String(id)?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Artista nou…</option></select>
+      </label>
+      <label class="wide" id="nomArtWrap" ${current?'':'hidden'}>Nom de l'artista (corregeix-lo si està mal escrit: es canvia a tots els seus discos)<input id="e_nomart" autocomplete="off" value="${esc(artName(d.artista))}"></label>
+      <label class="wide" id="newArtWrap" hidden>Nom de l'artista nou<input id="e_newart" autocomplete="off"></label>
+      <div class="wide notice">Per a un CD o vinil, n'hi ha prou amb el <b>codi de barres</b> o el <b>número de catàleg</b>. El disc queda «pendent de completar» i s'omple sol amb les dades de Discogs i AllMusic.
+        <div class="scan"><label class="btn" for="e_scan">Llegeix el codi d'una foto</label><input id="e_scan" type="file" accept="image/*" capture="environment" hidden><span id="scanMsg"></span></div></div>
+      <fieldset class="wide sups"><legend>Suports que tens</legend>${SUPS.map(([k,l])=>`<label><input type="checkbox" id="s_${k}" ${supList(d).includes(k)?'checked':''}> ${l}</label>`).join('')}</fieldset>
+      ${FIELDS.map(([k,l,w])=>`<label class="${w||''}">${l}<input id="e_${k}" value="${esc(d[k]??'')}" ${k==='data'?'type="date"':''}></label>`).join('')}
+      <label class="wide" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="e_pend" style="width:auto" ${(d.estat==='pendent'||!current)?'checked':''}> Pendent de completar automàticament</label>
+      <div class="wide"><h3 class="sec">Caràtula</h3>
+        <div class="coveredit">${sleeveHTML(d,true)}
+          <label>Puja una imatge, o enganxa-la amb Ctrl+V<input id="e_cover" type="file" accept="image/*" ${assets?'':'disabled'}></label>
+          ${assets?'':'<span style="color:var(--muted);font-size:13px">Només els editors poden canviar caràtules.</span>'}</div></div>
+      <div class="wide"><h3 class="sec">Temes</h3><div class="rows" id="rowsT">${trackList(d).map(rowT).join('')}</div>
+        <button class="btn" type="button" data-add="T" style="margin-top:8px">+ Afegeix tema</button></div>
+      <div class="wide"><h3 class="sec">Intèrprets</h3><div class="rows p" id="rowsP">${peopleList(d).map(rowP).join('')}</div>
+        <button class="btn" type="button" data-add="P" style="margin-top:8px">+ Afegeix intèrpret</button></div>
+    </form>
+  </div>`;
+  sh.querySelectorAll('.sleeve').forEach(el => io.observe(el));
+  if(!arts.length || current == null) {}
+  $('#e_artista').addEventListener('change', e => { const nou = e.target.value === '__new'; $('#newArtWrap').hidden = !nou; $('#nomArtWrap').hidden = nou || !current; if(!nou) $('#e_nomart').value = artName(e.target.value); });
+  $('#e_cover').addEventListener('change', onCover);
+  $('#e_scan').addEventListener('change', onScan);
+  sh.addEventListener('paste', onPasteCover);
+  $('#editForm').addEventListener('submit', onSave);
+  sh.scrollTop = 0;
+}
+async function onCover(e){
+  const f = e.target.files[0]; if(!f) return;
+  try{
+    const bmp = await createImageBitmap(f);
+    const s = Math.min(1, 600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width*s); c.height = Math.round(bmp.height*s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    pendingCover = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    const sl = document.querySelector('.coveredit .sleeve');
+    sl.querySelector('img')?.remove(); sl.querySelector('.ph')?.remove();
+    const img = new Image(); img.src = URL.createObjectURL(pendingCover); sl.prepend(img);
+  }catch{ toast('No s\'ha pogut llegir la imatge. Prova amb un JPG o PNG.'); }
+}
+async function onScan(e){
+  const f = e.target.files[0]; if(!f) return;
+  const msg = $('#scanMsg'); msg.textContent = 'Llegint el codi…';
+  let code = null;
+  try{
+    if('BarcodeDetector' in window){
+      const bmp = await createImageBitmap(f);
+      const r = await new BarcodeDetector({formats:['ean_13','upc_a','ean_8','upc_e','code_128']}).detect(bmp);
+      code = r[0]?.rawValue || null;
+    }
+    if(!code){
+      if(!window.ZXing) await new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'; sc.integrity='sha384-BzBxP10ZE72aitqj5UMmUsbKFliP/DZqA8Wq+BNNhlIJDGoEd1tpkMYXOg9+n6sB'; sc.crossOrigin='anonymous'; sc.onload=ok; sc.onerror=ko; document.head.appendChild(sc); });
+      const url = URL.createObjectURL(f);
+      const res = await new ZXing.BrowserMultiFormatReader().decodeFromImageUrl(url);
+      code = res?.getText?.() || res?.text || null;
+    }
+  }catch{}
+  if(code){ $('#e_barcode').value = code; msg.textContent = 'Codi llegit: ' + code; }
+  else msg.textContent = 'No s\'ha pogut llegir. Fes una foto més de prop i amb llum, o escriu els números.';
+}
+function onPasteCover(e){
+  const it = [...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
+  if(!it || !assets) return;
+  e.preventDefault();
+  onCover({target:{files:[it.getAsFile()]}});
+  toast('Caràtula enganxada. Desa per guardar-la.');
+}
+function readRows(sel, n){ return [...document.querySelectorAll(sel+' .r')].map(r => [...r.querySelectorAll('input')].map(i=>i.value.trim())).filter(x=>x.slice(0,n).some(Boolean)); }
+async function onSave(e){
+  e.preventDefault();
+  const btn = document.querySelector('[form="editForm"]'); btn.disabled = true;
+  try{
+    let artista = $('#e_artista').value;
+    if(artista === '__new'){
+      const nom = $('#e_newart').value.trim(); if(!nom){ toast('Escriu el nom de l\'artista nou.'); btn.disabled=false; return; }
+      artista = (await postJSON('/api/artista', {nom})).id;
+      artistes[artista] = nom;
+    } else if(current && $('#e_nomart').value.trim() && $('#e_nomart').value.trim() !== artName(artista)){
+      const nom = $('#e_nomart').value.trim();
+      const ja = Object.entries({...artistes, ...newArtists}).find(([k, v]) => k !== String(artista) && norm(v) === norm(nom));
+      if(ja) artista = ja[0];                       // ja existeix amb el nom bo: el disc hi passa
+      else { await postJSON('/api/artista', {id: String(artista), nom}); artistes[artista] = nom; }
+      var reanomenat = true;
+    }
+    const rec = {artista: String(artista)};
+    for(const [k] of FIELDS){ const v = $('#e_'+k).value.trim(); rec[k] = v || null; }
+    const known = SUPS.map(x=>x[0]); const extra = current ? supList(current).filter(s=>!known.includes(s)) : [];
+    rec.suport = [...SUPS.filter(([k])=>$('#s_'+k).checked).map(x=>x[0]), ...extra].join(', ') || null;
+    rec.temes = readRows('#rowsT',3).map((x,i)=>[x[0]||String(i+1), x[1], x[2], '', 0, 0]);
+    rec.interprets = readRows('#rowsP',2).map(x=>[x[0], x[1], 0]);
+    if(current){ const old = trackList(current); rec.temes = rec.temes.map(x => { const o = old.find(y=>y[1]===x[1]); return o ? [x[0],x[1],x[2],o[3],o[4],o[5]] : x; }); }
+    const id = current ? current.id : 'n' + Date.now();
+    rec.id = id;
+    if(pendingCover){ await api('/api/caratula?id=' + encodeURIComponent(id), {method:'POST', body: pendingCover}); rec.caratula = true; rec.cv = Date.now(); }
+    else if(current?.caratula){ rec.caratula = true; if(current.cv) rec.cv = current.cv; }
+    const corregit = current && (reanomenat || String(current.artista) !== rec.artista || (current.titol||'') !== (rec.titol||''));
+    for(const k of ['carpeta','discogs_release','discogs_master','completat','caratules','megasearch', ...(corregit ? [] : ['proc','no_trobat'])]) if(current?.[k]) rec[k] = current[k];
+    if(corregit) rec.reintenta = true;               // el PC el tornarà a buscar a internet amb el nom corregit
+    for(const k in rec) if(rec[k] === null) delete rec[k];
+    rec.updatedAt = new Date().toISOString();
+    if($('#e_pend').checked) rec.estat = 'pendent';
+    if(current?.fonts) rec.fonts = current.fonts;
+    if(current?.auto) rec.auto = current.auto;
+    await postJSON('/api/disc', rec);
+    const i = discs.findIndex(x => String(x.id) === String(id)); if(i >= 0) discs[i] = rec; else discs.push(rec);
+    rebuild(); render();
+    current = byId.get(id); editing = false; renderSheet();
+    toast('Desat');
+  }catch(err){
+    toast('No s\'ha pogut desar. Comprova que la finestra de la Discoteca segueix oberta.');
+  }finally{ btn.disabled = false; }
+}
+function askDelete(){
+  $('#confirmDel').innerHTML = `<div class="notice">Segur que vols esborrar «${esc(current.titol)}»? <button class="btn danger" type="button" data-delete-yes>Sí, esborra-la</button> <button class="btn ghost" type="button" data-delete-no>No</button></div>`;
+}
+async function doDelete(){
+  const id = String(current.id);
+  try{
+    await postJSON('/api/esborra', {id});
+    discs = discs.filter(x => String(x.id) !== id);
+    rebuild(); render(); closeSheet(); toast('Esborrada');
+  }catch{ toast('No s\'ha pogut esborrar. Torna-ho a provar.'); }
+}
+
+/* ---------- Esdeveniments ---------- */
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if(!t) { if(e.target.id==='scrim') closeSheet(); return; }
+  if(t.dataset.open != null){ openSheet(t.dataset.open); return; }
+  if(t.id === 'recsBtn'){ obreRecs(); return; }
+  if(t.dataset.ign){ ignora(t.dataset.ign, t.dataset.clau); return; }
+  if(t.dataset.run){ t.closest('details')?.removeAttribute('open'); run(t.dataset.run, t.dataset.id); return; }
+  if(t.hasAttribute('data-close') || t.hasAttribute('data-cancel')){ current && t.hasAttribute('data-cancel') ? (editing=false, renderSheet()) : closeSheet(); return; }
+  if(t.hasAttribute('data-edit')){ editing=true; renderForm(); return; }
+  if(t.hasAttribute('data-delete')){ askDelete(); return; }
+  if(t.hasAttribute('data-delete-yes')){ doDelete(); return; }
+  if(t.hasAttribute('data-delete-no')){ $('#confirmDel').innerHTML=''; return; }
+  if(t.dataset.add){ const box = $('#rows'+t.dataset.add); box.insertAdjacentHTML('beforeend', t.dataset.add==='T'?rowT([String(box.children.length+1),'','']):rowP()); box.lastElementChild.querySelectorAll('input')[t.dataset.add==='T'?1:0].focus(); return; }
+  if(t.hasAttribute('data-del-row')){ t.closest('.r').remove(); return; }
+  if(t.dataset.artist != null){ closeSheet(); $('#q').value = artName(t.dataset.artist); state.q = $('#q').value; shown = PAGE; render(); window.scrollTo(0,0); return; }
+  if(t.dataset.sup != null){ document.querySelectorAll('[data-sup]').forEach(b=>b.setAttribute('aria-pressed', String(b===t))); state.sup=t.dataset.sup; shown=PAGE; render(); return; }
+});
+$('#scrim').addEventListener('click', closeSheet);
+document.addEventListener('keydown', e => { if(e.key!=='Escape') return; if(!$('#info').hidden) tancaInfo(); else if(!$('#sheet').hidden) closeSheet(); });
+$('#scrim2').addEventListener('click', () => tancaInfo());
+let qt; $('#q').addEventListener('input', e => { clearTimeout(qt); qt=setTimeout(()=>{ state.q=e.target.value; shown=PAGE; render(); }, 150); });
+$('#fEstil').addEventListener('change', e => { state.estil=e.target.value; shown=PAGE; render(); });
+$('#fNota').addEventListener('change', e => { state.nota=e.target.value; shown=PAGE; render(); });
+$('#fOrdre').addEventListener('change', e => { state.ordre=e.target.value; shown=PAGE; render(); });
+$('#moreBtn').addEventListener('click', () => { shown += PAGE; render(); });
+$('#newBtn').addEventListener('click', () => openSheet(null, true));
+
+/* ---------- Fitxa d'artista o músic: es busca a internet en el moment i no es desa enlloc ---------- */
+const MB = 'https://musicbrainz.org/ws/2/';
+let mbUltim = 0;
+async function mb(path){
+  const espera = 1100 - (Date.now() - mbUltim);           // MusicBrainz demana 1 consulta per segon
+  if(espera > 0) await new Promise(r => setTimeout(r, espera));
+  mbUltim = Date.now();
+  const r = await fetch(MB + path + (path.includes('?') ? '&' : '?') + 'fmt=json');
+  if(!r.ok) throw new Error('MusicBrainz ' + r.status);
+  return r.json();
+}
+const neteja = s => norm(s).replace(/^the\s+|,\s*the$/g, '').replace(/[^a-z0-9]/g, '');
+async function buscaArtistaMB(nom, banda){
+  const j = await mb('artist?limit=8&query=' + encodeURIComponent('artist:"' + nom + '"'));
+  let c = (j.artists || []).filter(a => neteja(a.name) === neteja(nom) || (a.aliases || []).some(x => neteja(x.name) === neteja(nom)));
+  if(!c.length) c = (j.artists || []).slice(0, 1);
+  if(c.length > 1 && banda){
+    // si hi ha homònims, triem el que té relació amb la banda del disc
+    for(const a of c.slice(0, 4)){
+      const det = await mb('artist/' + a.id + '?inc=artist-rels');
+      if((det.relations || []).some(r => r.artist && neteja(r.artist.name) === neteja(banda))) return a;
+    }
+  }
+  return c.sort((a, b) => (b.score || 0) - (a.score || 0))[0] || null;
+}
+async function wikipedia(rels, nom){
+  const wd = (rels || []).find(r => r.type === 'wikidata')?.url?.resource?.match(/Q\d+/)?.[0];
+  let titols = {};
+  if(wd){
+    try{
+      const j = await (await fetch('https://www.wikidata.org/w/api.php?action=wbgetentities&props=sitelinks&format=json&origin=*&ids=' + wd)).json();
+      const sl = j.entities?.[wd]?.sitelinks || {};
+      for(const l of ['ca', 'es', 'en']) if(sl[l + 'wiki']) titols[l] = sl[l + 'wiki'].title;
+    }catch{}
+  }
+  if(!Object.keys(titols).length) titols = {en: nom};
+  for(const l of ['ca', 'es', 'en']){
+    if(!titols[l]) continue;
+    try{
+      const r = await fetch(`https://${l}.wikipedia.org/api/rest_v1/page/summary/` + encodeURIComponent(titols[l].replace(/ /g, '_')));
+      if(!r.ok) continue;
+      const j = await r.json();
+      if(j.type === 'disambiguation' || !j.extract) continue;
+      return {llengua: l, text: j.extract, foto: j.thumbnail?.source, url: j.content_urls?.desktop?.page};
+    }catch{}
+  }
+  return null;
+}
+async function obreInfo(nom, banda){
+  const sh = $('#info');
+  sh.hidden = false; $('#scrim2').hidden = false;
+  const enl = q => encodeURIComponent(q);
+  sh.innerHTML = `<div class="bar"><button class="btn ghost" type="button" data-close-info>← Torna</button></div>
+    <div class="body"><h2 class="brand" style="margin:0 0 4px">${esc(nom)}</h2>
+    <p class="srcs" style="margin:0 0 16px">
+      <a href="https://www.allmusic.com/search/artists/${enl(nom)}" target="_blank" rel="noopener">AllMusic</a> ·
+      <a href="https://www.discogs.com/search/?type=artist&q=${enl(nom)}" target="_blank" rel="noopener">Discogs</a> ·
+      <a href="https://www.last.fm/music/${enl(nom).replace(/%20/g, '+')}" target="_blank" rel="noopener">Last.fm</a></p>
+    <div id="infoCos"><p class="carrega">Buscant a Wikipedia i MusicBrainz…</p></div></div>`;
+  sh.scrollTop = 0;
+  const cos = () => document.getElementById('infoCos');
+  try{
+    const a = await buscaArtistaMB(nom, banda);
+    if(!a){ cos().innerHTML = '<p>No he trobat aquest nom a MusicBrainz. Prova els enllaços de dalt.</p>'; return; }
+    const det = await mb('artist/' + a.id + '?inc=artist-rels+url-rels');
+    const wiki = await wikipedia(det.relations, nom);
+    const tipus = {Person: 'Músic', Group: 'Grup'}[det.type] || '';
+    const anys = det['life-span'] ? [det['life-span'].begin, det['life-span'].end].filter(Boolean).map(x => x.slice(0, 4)).join('–') : '';
+    // grups i projectes
+    const rels = (det.relations || []).filter(r => r.artist && /member of band|collaboration|is person|subgroup/.test(r.type));
+    const grups = new Map();
+    for(const r of rels){
+      const g = r.artist.name;
+      const k = neteja(g);
+      const per = [r.begin, r.end].filter(Boolean).map(x => x.slice(0, 4)).join('–');
+      const rol = r.type === 'member of band' ? (r.direction === 'backward' ? 'membre' : 'membre') : r.type === 'collaboration' ? 'col·laboració' : '';
+      const ja = grups.get(k);
+      if(!ja) grups.set(k, {nom: g, per, rol, inv: r.direction === 'backward'});
+    }
+    const meus = new Set(Object.values(artistes).map(neteja));
+    const llista = [...grups.values()];
+    const membresDe = llista.filter(x => !x.inv), membres = llista.filter(x => x.inv);
+    // discos (àlbums d'estudi i en directe)
+    const rg = await mb('release-group?limit=100&artist=' + a.id);
+    const discosMB = (rg['release-groups'] || []).filter(x => ['Album', 'EP'].includes(x['primary-type']) && !(x['secondary-types'] || []).includes('Compilation'))
+      .sort((x, y) => (x['first-release-date'] || '9').localeCompare(y['first-release-date'] || '9'));
+    const noms = new Set([neteja(det.name), ...llista.map(x => neteja(x.nom))]);
+    const tinc = new Map(discs.filter(d => noms.has(neteja(artName(d.artista)))).map(d => [neteja(d.titol), d]));
+    const fila = x => `<li><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button>${x.per ? ` <span class="who2">${esc(x.per)}</span>` : ''}${meus.has(neteja(x.nom)) ? '<span class="tag">A la col·lecció</span>' : ''}</li>`;
+    cos().innerHTML = `
+      <div class="ihero">${wiki?.foto ? `<img src="${esc(wiki.foto)}" alt="" referrerpolicy="no-referrer">` : ''}
+        <div>${tipus || anys || det.country ? `<p class="who2">${[tipus, anys, det.country].filter(Boolean).map(esc).join(' · ')}</p>` : ''}
+        ${wiki ? `<p>${esc(wiki.text)}</p><p class="srcs"><a href="${urlSegur(wiki.url)}" target="_blank" rel="noopener">Wikipedia (${wiki.llengua})</a> · <a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`
+               : `<p class="who2">No hi ha article a la Wikipedia.</p><p class="srcs"><a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`}</div></div>
+      ${membresDe.length ? `<h3 class="sec">Grups i projectes · ${membresDe.length}</h3><ul class="disc">${membresDe.map(fila).join('')}</ul>` : ''}
+      ${membres.length ? `<h3 class="sec">Membres · ${membres.length}</h3><ul class="disc">${membres.map(fila).join('')}</ul>` : ''}
+      ${discosMB.length ? `<h3 class="sec">Discos · ${discosMB.length}</h3><ul class="disc">${discosMB.map(x => {
+          const d = tinc.get(neteja(x.title));
+          return `<li>${d ? `<button class="link" type="button" data-open-info="${esc(d.id)}">${esc(x.title)}</button><span class="tag">El tens</span>` : esc(x.title)} <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}${x['primary-type'] === 'EP' ? ' · EP' : ''}</span></li>`;
+        }).join('')}</ul>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
+  }catch(e){
+    cos().innerHTML = '<p>No s\'ha pogut consultar ara mateix. Comprova la connexió i torna-ho a provar, o fes servir els enllaços de dalt.</p>';
+  }
+}
+function tancaInfo(){ $('#info').hidden = true; $('#scrim2').hidden = true; }
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-info],[data-close-info],[data-open-info]'); if(!t) return;
+  e.stopPropagation();
+  if(t.dataset.info != null) obreInfo(t.dataset.info, t.dataset.banda || '');
+  else if(t.hasAttribute('data-close-info')) tancaInfo();
+  else { tancaInfo(); openSheet(t.dataset.openInfo); }
+}, true);
+
+/* ---------- Arrencada ---------- */
+async function load(){
+  const j = await api('/api/dades');
+  artistes = j.artistes; discs = j.discs; recCache.clear();
+  rebuild(); render();
+  if(current){ current = byId.get(current.id) || null; if(current && !editing) renderSheet(); }
+}
+async function start(){
+  const q = new URLSearchParams(location.search);
+  if(q.get('code')){
+    try{ await canviaCodi(q.get('code'), true); }catch{}
+    history.replaceState(null, '', REDIRECT);
+  }
+  if(!LS.get('dbx_refresh') && !LS.get('dbx_access')){ $('#login').hidden = false; return; }
+  $('#stats').textContent = 'Carregant el catàleg des de Dropbox…';
+  try{ await load(); }
+  catch(e){
+    if(e.login){ $('#login').hidden = false; return; }
+    $('#stats').textContent = 'No s\'ha pogut carregar el catàleg. Comprova la connexió i torna-ho a provar.'; return;
+  }
+  $('#newBtn').hidden = false;
+}
+$('#entraBtn').addEventListener('click', entra);
+$('#codiBtn').addEventListener('click', async () => {
+  const c = $('#codiIn').value.trim(); if(!c) return;
+  try{ await canviaCodi(c, false); $('#login').hidden = true; start(); }
+  catch{ toast('El codi no és vàlid. Torna a fer clic a «Entra amb Dropbox».'); }
+});
+$('#surtBtn')?.addEventListener('click', () => { ['dbx_refresh','dbx_access','dbx_exp'].forEach(LS.del); location.reload(); });
+/* ---------- Completador ---------- */
+let wasRunning = false;
+async function pollEstat(){
+  try{
+    const st = await api('/api/estat');
+    const el = $('#estat');
+    if(st.en_marxa){ el.hidden = false; el.textContent = st.text || 'Treballant…'; wasRunning = true; }
+    else { el.hidden = !st.text; el.textContent = st.text ? 'Últim: ' + st.text : ''; if(wasRunning){ wasRunning = false; await load(); toast('Completat'); } }
+    document.querySelectorAll('[data-run]').forEach(b => b.disabled = !!st.en_marxa);
+  }catch{}
+  setTimeout(pollEstat, wasRunning ? 3000 : 15000);
+}
+async function run(mode, id){
+  try{
+    const r = await api('/api/completa?mode=' + mode + (id ? '&id=' + encodeURIComponent(id) : ''), {method:'POST'});
+    if(!r.ok){ toast(r.motiu || 'Ja està treballant'); return; }
+    wasRunning = true; toast('Començat'); setTimeout(pollEstat, 1500);
+  }catch{ toast('No s\'ha pogut començar.'); }
+}
+const esLocal = false;
+document.querySelectorAll('[data-run]').forEach(b => b.hidden = true);
+document.querySelectorAll('.local-only').forEach(b => b.hidden = !esLocal);
+$('#mobilBtn').addEventListener('click', async () => {
+  $('.tools').removeAttribute('open');
+  let url = ''; try{ url = (await api('/api/mobil')).url; }catch{}
+  const sh = $('#sheet'); current = null; editing = false;
+  sh.hidden = false; $('#scrim').hidden = false;
+  sh.innerHTML = `<div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button></div>
+  <div class="body"><h2 id="sheetTitle" class="brand" style="margin-bottom:12px">Al mòbil o la tauleta</h2>
+  <ol class="passos">
+    <li>Connecta l'iPhone o l'iPad a la <b>mateixa Wi-Fi</b> que aquest PC. El PC ha d'estar encès i la Discoteca oberta.</li>
+    <li>Obre la <b>Càmera</b> i apunta a aquest codi (o escriu l'adreça a <b>Safari</b>):</li>
+  </ol>
+  <div id="qr" style="background:#fff;padding:14px;display:inline-block;border-radius:6px"></div>
+  <p class="url"><code>${esc(url)}</code></p>
+  <ol class="passos" start="3">
+    <li>Quan s'obri a Safari, toca el botó <b>Compartir</b> (el quadre amb la fletxa) i després <b>Añadir a pantalla de inicio</b>. Tindràs la icona del vinil com una app.</li>
+  </ol>
+  <p class="notice">Aquest enllaç porta la teva clau personal: no el comparteixis. El mòbil la recorda i no caldrà tornar-la a escriure.</p></div>`;
+  try{
+    if(!window.QRCode) await new Promise((ok,ko)=>{ const sc=document.createElement('script'); sc.src='https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'; sc.onload=ok; sc.onerror=ko; document.head.appendChild(sc); });
+    new QRCode($('#qr'), {text:url, width:220, height:220});
+  }catch{ $('#qr').hidden = true; }
+});
+$('#aturaBtn').addEventListener('click', async () => {
+  try{ await api('/api/atura', {method:'POST'}); }catch{}
+  document.body.innerHTML = '<p style="padding:40px;font:18px system-ui">Discoteca tancada. Per tornar-la a obrir, fes servir l\'accés directe de l\'escriptori.</p>';
+});
+start();
+})();
+</script>
+</body></html>
