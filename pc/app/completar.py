@@ -142,6 +142,15 @@ def completa(d, artistes, estils_meus):
         except Exception as e:
             d['am_error'] = AVUI
             log(f'  AllMusic: error {e!r}')
+    # 2b. MusicBrainz: quan AllMusic no dona el disc (API oberta, permet l'accés automàtic)
+    mb = None
+    if not am and nom_art and titol:
+        try:
+            mb = fonts.musicbrainz(nom_art, titol)
+        except Exception as e:
+            log(f'  MusicBrainz: error {e!r}')
+    if mb:
+        fonts_d['MusicBrainz'] = mb['url']
     if am:
         fonts_d['AllMusic'] = am['url']
         omple('any', am.get('any') or str(((dg or {}).get('master') or {}).get('year') or ''))
@@ -149,15 +158,22 @@ def completa(d, artistes, estils_meus):
         est = next((estils_meus[N(x)] for x in am.get('estils', []) if N(x) in estils_meus), (am.get('estils') or [None])[0])
         omple('estil', est)
         omple('clasamg', am.get('amg'))
-    elif dg:
-        omple('any', str((dg.get('master') or {}).get('year') or dg.get('any') or ''))
-        omple('genere', GEN.get(N((dg.get('generes') or [''])[0]), (dg.get('generes') or [None])[0]))
-        est = next((estils_meus[N(x)] for x in dg.get('estils', []) if N(x) in estils_meus), (dg.get('estils') or [None])[0])
+    elif dg or mb:
+        dg_, mb_ = dg or {}, mb or {}
+        omple('any', str((dg_.get('master') or {}).get('year') or mb_.get('any') or dg_.get('any') or ''))
+        # gènere ampli: el de Discogs; si no n'hi ha, el primer de MusicBrainz que encaixi amb els teus (Rock, Jazz...)
+        omple('genere', GEN.get(N((dg_.get('generes') or [''])[0]), (dg_.get('generes') or [None])[0])
+              or next((GEN[N(x)] for x in mb_.get('generes', []) if N(x) in GEN), None))
+        # estil: primer un dels que ja fas servir, després el de Discogs i, si no, el de MusicBrainz
+        cands = dg_.get('estils', []) + mb_.get('generes', [])
+        est = next((estils_meus[N(x)] for x in cands if N(x) in estils_meus), None) or \
+            (dg_.get('estils') or [None])[0] or ' '.join(w.capitalize() for w in (mb_.get('generes') or [''])[0].split()) or None
         omple('estil', est)
 
     # 3. Temes: conservem els teus noms i hi afegim el compositor
-    ref = (am or {}).get('temes') or (dg or {}).get('temes') or []
+    ref = (am or {}).get('temes') or (dg or {}).get('temes') or (mb or {}).get('temes') or []
     ref_dg = (dg or {}).get('temes') or []
+    ref_mb = (mb or {}).get('temes') or []
     temes = [list(x) + [''] * (6 - len(x)) for x in d.get('temes', [])]
     if not temes and ref:
         temes = [[t['n'], t['titol'], '', '', 0, 0] for t in ref]
@@ -166,7 +182,7 @@ def completa(d, artistes, estils_meus):
     for t in temes:
         if t[2]:
             continue
-        for llista in (ref, ref_dg):
+        for llista in (ref, ref_dg, ref_mb):
             m = max(llista, key=lambda r: sim(r['titol'], t[1]), default=None)
             if m and sim(m['titol'], t[1]) > 0.75 and m['compositors']:
                 t[2] = ' / '.join(m['compositors'])
@@ -179,7 +195,7 @@ def completa(d, artistes, estils_meus):
     # 4. Intèrprets
     if not d.get('interprets'):
         P, vist = [], {}
-        credits = list((am or {}).get('credits', [])) + list((dg or {}).get('credits', []))
+        credits = list((am or {}).get('credits', [])) + list((dg or {}).get('credits', [])) + list((mb or {}).get('credits', []))
         for n, rol in credits:
             if not n or N(n) == N(nom_art):
                 continue
@@ -215,7 +231,7 @@ def completa(d, artistes, estils_meus):
     if (not d.get('bitrate') or variable) and d.get('carpeta'):
         d['br'] = 2          # ja s'ha provat amb el mètode nou
         try:
-            br = bitrate_estimat(d, (am or {}).get('temes') or [], (dg or {}).get('temes') or [], variable)
+            br = bitrate_estimat(d, (am or {}).get('temes') or [], (dg or {}).get('temes') or [], variable, ref_mb)
             if br:
                 d['bitrate'] = br
                 auto.add('bitrate'); canvis.append('bitrate')
@@ -224,7 +240,7 @@ def completa(d, artistes, estils_meus):
 
     # 5. Caràtula
     if not d.get('caratula'):
-        for url in [(am or {}).get('caratula'), (dg or {}).get('caratula')]:
+        for url in [(am or {}).get('caratula'), (dg or {}).get('caratula'), (mb or {}).get('caratula')]:
             if not url:
                 continue
             b = fonts.descarrega(url)
@@ -247,9 +263,9 @@ def completa(d, artistes, estils_meus):
     d['proc'] = AVUI
     if canvis:
         d['revisar'] = True
-    if d.get('estat') == 'pendent' and (am or dg):
+    if d.get('estat') == 'pendent' and (am or dg or mb):
         d.pop('estat')
-    return canvis, bool(am), bool(dg)
+    return canvis, bool(am), bool(dg), bool(mb)
 
 
 def segons(t):
@@ -264,7 +280,7 @@ def segons(t):
 ESTANDARD = [96, 112, 128, 160, 192, 224, 256, 320]
 
 
-def bitrate_estimat(d, temes_am, temes_dg, variable=False):
+def bitrate_estimat(d, temes_am, temes_dg, variable=False, temes_mb=()):
     """Bitrate dels MP3 del NAS sense obrir-los: mida de l'arxiu (només es llegeix la mida) / durada del tema.
     Cada arxiu s'aparella amb el seu tema pel número o pel nom, així funciona encara que hi hagi
     temes extra o en faltin."""
@@ -283,7 +299,7 @@ def bitrate_estimat(d, temes_am, temes_dg, variable=False):
         return 'Flac'
     if not mp3:
         return None
-    for ref in (temes_am, temes_dg):
+    for ref in (temes_am, temes_dg, temes_mb):
         temes = [(str(t.get('titol') or ''), segons(t.get('durada'))) for t in ref]
         temes = [x for x in temes if x[1] > 0]
         if not temes:
@@ -513,7 +529,7 @@ def tanda(mode, n, id_=None):
                 [d for d in falten if id(d) not in ja and not d.get('am_error')]
     cua = cua[:n]
     log(f'Tanda «{mode}»: {len(cua)} discos')
-    fets, saltats, compte = 0, 0, {'sí': 0, 'no': 0, 'error': 0}
+    fets, saltats, compte = 0, 0, {'sí': 0, 'no': 0, 'error': 0, 'mb': 0}
     desador = Desador()
     try:
         for i, d in enumerate(cua, 1):
@@ -526,12 +542,14 @@ def tanda(mode, n, id_=None):
             abans = json.loads(json.dumps(d))
             try:
                 d.pop('reintenta', None)
-                canvis, am, dg = completa(d, artistes, estils_meus)
-                log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (AllMusic {'sí' if am else 'no'}, Discogs {'sí' if dg else 'no'})")
+                canvis, am, dg, mb = completa(d, artistes, estils_meus)
+                log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (AllMusic {'sí' if am else 'no'}, Discogs {'sí' if dg else 'no'}"
+                    f"{', MusicBrainz sí' if mb else ''})")
                 compte['error' if d.get('am_error') else 'sí' if am else 'no'] += 1
-                if not am and not dg and not d.get('am_error'):
+                compte['mb'] += 1 if mb else 0
+                if not am and not dg and not mb and not d.get('am_error'):
                     d['no_trobat'] = AVUI
-                elif am or dg:
+                elif am or dg or mb:
                     d.pop('no_trobat', None)
                 fets += 1 if canvis else 0
             except Exception as e:
@@ -543,6 +561,7 @@ def tanda(mode, n, id_=None):
         desador.desa()
     if cua:
         log(f"AllMusic en aquesta tanda: {compte['sí']} trobats, {compte['no']} no hi són, {compte['error']} no ha deixat consultar"
+            f" · MusicBrainz: {compte['mb']} discos"
             + (f" · {saltats} discos ajornats fins que AllMusic torni a respondre" if saltats else ''))
     return fets
 

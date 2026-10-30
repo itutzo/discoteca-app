@@ -19,6 +19,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - `fonts.py`:
   - **AllMusic** sempre amb Playwright i el **Chrome** instal·lat (`channel='chrome'`, finestra fora de la pantalla), perquè bloqueja els altres clients.
   - **Discogs** per l'API amb token, **Last.fm** (`getsimilar`, `getinfo` i `gettoptags`) i **Apple Music** (HTML).
+  - **MusicBrainz** (API oberta, 1 consulta per segon, User-Agent amb l'adreça del repositori) quan AllMusic no dona el disc: any, gèneres, compositors (relacions de *work*), intèrprets i caràtula de Cover Art Archive. AllMusic bloqueja l'accés automàtic des del 28/10/2026 (403): no s'ha d'intentar esquivar.
 - `comu.py`:
   - Rutes i configuració (`%USERPROFILE%\.discoteca\config.ini`, **fora** de Dropbox, amb els tokens de Discogs i Last.fm).
   - Escriptura atòmica amb reintents, perquè Dropbox bloqueja arxius, i còpies diàries a `dades/copies`.
