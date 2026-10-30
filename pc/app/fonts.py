@@ -77,10 +77,20 @@ def get(url, headers=None, json_=False, binari=False, intents=3):
             raise
 
 
+class AMBloquejat(ErrorHTTP):
+    """AllMusic ha refusat diverses peticions seguides: no s'hi insisteix durant aquesta tanda."""
+    def __init__(self):
+        super().__init__(403)
+
+
 class NavegadorAM:
     """AllMusic només deixa entrar navegadors reals: fem servir el Chrome del PC, amb un perfil a part i fora de la pantalla."""
+    MAX_REFUSOS = 3
+
     def __init__(self):
         self.pw = self.br = self.pg = None
+        self.refusos = 0
+        self.bloquejat = False
 
     def obre(self):
         if self.pg:
@@ -109,20 +119,45 @@ class NavegadorAM:
             self.pg = None
 
     def text(self, url):
-        self.obre()
-        if not self.pg:
-            raise ErrorHTTP(403)
-        host = 'www.allmusic.com'
-        espera = PAUSA[host] - (time.time() - _ultim.get(host, 0))
-        if espera > 0:
-            time.sleep(espera + random.random() * 0.5)
-        _ultim[host] = time.time()
-        r = self.pg.evaluate('async u => { const r = await fetch(u); return [r.status, await r.text()]; }', url)
-        if r[0] == 404:
-            return None
-        if r[0] >= 400:
-            raise ErrorHTTP(r[0])
-        return r[1]
+        if self.bloquejat:
+            raise AMBloquejat()
+        for intent in range(2):
+            self.obre()
+            if not self.pg:
+                raise ErrorHTTP(403)
+            host = 'www.allmusic.com'
+            espera = PAUSA[host] - (time.time() - _ultim.get(host, 0))
+            if espera > 0:
+                time.sleep(espera + random.random() * 0.5)
+            _ultim[host] = time.time()
+            try:
+                r = self.pg.evaluate('async u => { const r = await fetch(u); return [r.status, await r.text()]; }', url)
+            except Exception as e:
+                # la finestra de Chrome s'ha tancat o penjat: s'obre de nou un sol cop
+                if intent == 0 and re.search(r'closed|crash', repr(e), re.I):
+                    self.tanca_finestra()
+                    continue
+                raise
+            if r[0] == 404:
+                return None
+            if r[0] in (403, 429):
+                # AllMusic no vol respostes automàtiques: després de uns quants refusos seguits ho deixem estar
+                self.refusos += 1
+                if self.refusos >= self.MAX_REFUSOS:
+                    self.bloquejat = True
+                    log(f'  AllMusic: {self.refusos} refusos seguits; no es torna a provar fins a la propera tanda')
+                    raise AMBloquejat()
+            if r[0] >= 400:
+                raise ErrorHTTP(r[0])
+            self.refusos = 0
+            return r[1]
+
+    def tanca_finestra(self):
+        try:
+            if self.br: self.br.close()
+        except Exception:
+            pass
+        self.br = self.pg = None
 
     def tanca(self):
         try:
@@ -133,7 +168,6 @@ class NavegadorAM:
 
 
 _am_nav = NavegadorAM()
-_am_bloquejat = {'v': False}
 
 
 def sopa(url):
@@ -166,8 +200,13 @@ def allmusic(artista, titol):
     if not best:
         return None
     url = re.sub(r'^https?://[^/]+', '', best['url'])
-    mw = re.search(r'mw\d+', url).group(0)
+    mw = re.search(r'mw\d+', url)
+    if not mw:
+        return None
+    mw = mw.group(0)
     d = sopa(AM + url)
+    if not d:
+        return None
     out = {'url': AM + url}
     dt = d.select_one('.release-date span') or d.select_one('.release-date')
     out['data'] = re.sub(r'^Release Date\s*', '', txt(dt))

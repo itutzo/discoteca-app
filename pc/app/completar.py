@@ -35,17 +35,49 @@ def estat(text):
     desa('estat.json', {'text': text, 'quan': datetime.datetime.now().isoformat(timespec='seconds')})
 
 
-def actualitza_disc(nou):
-    """Torna a llegir el fitxer just abans d'escriure, per no trepitjar canvis fets des de la pàgina."""
-    with comu.BLOC:
-        discs = llegeix('discs.json', [])
-        for i, d in enumerate(discs):
-            if str(d.get('id')) == str(nou.get('id')):
-                discs[i] = nou
-                break
-        else:
-            discs.append(nou)
-        desa('discs.json', discs)
+_RES = object()
+
+
+class Desador:
+    """Guarda els discos completats de mica en mica (no a cada disc: discs.json és gran i Dropbox el torna a pujar
+    sencer cada vegada). Només s'hi escriuen els camps que ha tocat el completador, i sobre la versió més nova de
+    l'arxiu: si mentrestant has editat un camp o has esborrat el disc des de la pàgina o el mòbil, es respecta."""
+    CADA_DISCOS, CADA_SEGONS = 15, 120
+
+    def __init__(self):
+        self.cua, self.ultim = [], time.time()
+
+    def afegeix(self, abans, d):
+        camps = {k for k in set(abans) | set(d) if abans.get(k, _RES) != d.get(k, _RES)}
+        if camps:
+            self.cua.append((str(d.get('id')), abans, d, camps))
+        if len(self.cua) >= self.CADA_DISCOS or time.time() - self.ultim > self.CADA_SEGONS:
+            self.desa()
+
+    def desa(self):
+        self.ultim = time.time()
+        if not self.cua:
+            return
+        with comu.BLOC:
+            try:
+                comu.aplica_canvis_mobil()      # primer, el que hagis canviat des del mòbil
+            except Exception as e:
+                log(f'Error incorporant canvis del mòbil: {e!r}')
+            discs = llegeix('discs.json', [])
+            per_id = {str(x.get('id')): x for x in discs}
+            for id_, abans, d, camps in self.cua:
+                ara = per_id.get(id_)
+                if ara is None:
+                    continue                    # l'has esborrat mentre es completava
+                for k in camps:
+                    if ara.get(k, _RES) != abans.get(k, _RES):
+                        continue                # l'has canviat tu mentrestant: mana el teu
+                    if k in d:
+                        ara[k] = d[k]
+                    else:
+                        ara.pop(k, None)
+            desa('discs.json', discs)
+        self.cua = []
 
 
 def id_artista(nom, artistes):
@@ -101,11 +133,15 @@ def completa(d, artistes, estils_meus):
 
     # 2. AllMusic
     am = None
-    try:
-        if nom_art and titol:
+    if nom_art and titol:
+        try:
             am = fonts.allmusic(nom_art, titol)
-    except Exception as e:
-        log(f'  AllMusic: error {e!r}')
+            d.pop('am_error', None)
+        except fonts.AMBloquejat:
+            d['am_error'] = AVUI         # es tornarà a provar quan AllMusic torni a respondre
+        except Exception as e:
+            d['am_error'] = AVUI
+            log(f'  AllMusic: error {e!r}')
     if am:
         fonts_d['AllMusic'] = am['url']
         omple('any', am.get('any') or str(((dg or {}).get('master') or {}).get('year') or ''))
@@ -428,6 +464,26 @@ def perfil_lastfm(maxim=600):
     return fets
 
 
+def marca_reintents_allmusic():
+    """Un sol cop: els discos repassats des del 25/10/2026 sense dades d'AllMusic (AllMusic responia 403)
+    queden marcats perquè s'hi torni a provar."""
+    fetes = llegeix('migracions.json', {})
+    if fetes.get('allmusic_403'):
+        return
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n = 0
+        for d in discs:
+            if d.get('proc', '') >= '2026-10-25' and 'AllMusic' not in (d.get('fonts') or {}) and not d.get('am_error'):
+                d['am_error'] = d['proc']
+                n += 1
+        if n:
+            desa('discs.json', discs)
+    fetes['allmusic_403'] = AVUI
+    desa('migracions.json', fetes)
+    log(f'AllMusic: {n} discos marcats per tornar-hi a provar')
+
+
 def tanda(mode, n, id_=None):
     artistes = llegeix('artistes.json', {})
     discs = llegeix('discs.json', [])
@@ -450,27 +506,44 @@ def tanda(mode, n, id_=None):
             # discos ja repassats que es van quedar sense bitrate: es tornen a provar un cop
             sense_br = [d for d in discs if d.get('carpeta') and (not d.get('bitrate') and d.get('proc') or d.get('bitrate') == 'VBR')
                         and d.get('br') != 2 and d.get('estat') != 'pendent']
-            cua = pend + sense_br + mai + [d for d in falten if d not in sense_br]
+            # discos que AllMusic no va deixar consultar (403): un altre intent, com a molt un cop al dia
+            am_err = [d for d in discs if d.get('am_error') and d.get('estat') != 'pendent' and d.get('proc', '') < AVUI]
+            ja = {id(x) for x in pend + sense_br}
+            cua = pend + sense_br + [d for d in am_err if id(d) not in ja] + mai + \
+                [d for d in falten if id(d) not in ja and not d.get('am_error')]
     cua = cua[:n]
     log(f'Tanda «{mode}»: {len(cua)} discos')
-    fets = 0
-    for i, d in enumerate(cua, 1):
-        nom = f"{artistes.get(str(d['artista']), '?')} - {d.get('titol', '')}"
-        estat(f'{i}/{len(cua)} · {nom}')
-        try:
-            d.pop('reintenta', None)
-            canvis, am, dg = completa(d, artistes, estils_meus)
-            log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (AllMusic {'sí' if am else 'no'}, Discogs {'sí' if dg else 'no'})")
-            if not am and not dg:
-                d['no_trobat'] = AVUI
-            else:
-                d.pop('no_trobat', None)
-            fets += 1 if canvis else 0
-        except Exception as e:
-            log(f'  {nom}: ERROR {e!r}')
-            d['proc'] = AVUI
-            d['proc_error'] = str(e)[:200]
-        actualitza_disc(d)
+    fets, saltats, compte = 0, 0, {'sí': 0, 'no': 0, 'error': 0}
+    desador = Desador()
+    try:
+        for i, d in enumerate(cua, 1):
+            # si AllMusic ens ha tancat la porta, no cal repassar ara els discos que només esperaven AllMusic
+            if fonts._am_nav.bloquejat and d.get('am_error') and mode != 'disc' and d.get('estat') != 'pendent':
+                saltats += 1
+                continue
+            nom = f"{artistes.get(str(d['artista']), '?')} - {d.get('titol', '')}"
+            estat(f'{i}/{len(cua)} · {nom}')
+            abans = json.loads(json.dumps(d))
+            try:
+                d.pop('reintenta', None)
+                canvis, am, dg = completa(d, artistes, estils_meus)
+                log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (AllMusic {'sí' if am else 'no'}, Discogs {'sí' if dg else 'no'})")
+                compte['error' if d.get('am_error') else 'sí' if am else 'no'] += 1
+                if not am and not dg and not d.get('am_error'):
+                    d['no_trobat'] = AVUI
+                elif am or dg:
+                    d.pop('no_trobat', None)
+                fets += 1 if canvis else 0
+            except Exception as e:
+                log(f'  {nom}: ERROR {e!r}')
+                d['proc'] = AVUI
+                d['proc_error'] = str(e)[:200]
+            desador.afegeix(abans, d)
+    finally:
+        desador.desa()
+    if cua:
+        log(f"AllMusic en aquesta tanda: {compte['sí']} trobats, {compte['no']} no hi són, {compte['error']} no ha deixat consultar"
+            + (f" · {saltats} discos ajornats fins que AllMusic torni a respondre" if saltats else ''))
     return fets
 
 
@@ -793,6 +866,10 @@ def main():
                     pas()
                 except Exception as e:
                     log(f'{nom}: error {e!r}')
+        try:
+            marca_reintents_allmusic()
+        except Exception as e:
+            log(f'AllMusic: error marcant reintents {e!r}')
         fets = 0
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)

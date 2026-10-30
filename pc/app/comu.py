@@ -125,11 +125,31 @@ def netejar_copies(guardar=30):
                 pass
 
 
+def obre_navegador(url):
+    """Obre la pàgina amb Chrome (mai amb Edge, encara que sigui el navegador predeterminat del Windows)."""
+    import subprocess, webbrowser
+    for base in (os.environ.get('ProgramFiles'), os.environ.get('ProgramFiles(x86)'), os.environ.get('LOCALAPPDATA')):
+        chrome = os.path.join(base or '', 'Google', 'Chrome', 'Application', 'chrome.exe')
+        if base and os.path.isfile(chrome):
+            subprocess.Popen([chrome, url])
+            return
+    webbrowser.open(url)
+
+
+MIDA_MAX_REGISTRE = 2 * 1024 * 1024
+
+
 def log(text):
     linia = f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  {text}"
     try:
         print(linia, flush=True)
     except Exception:
+        pass
+    try:
+        # quan el registre passa de 2 MB, el vell es guarda a registre-anterior.txt i se'n comença un de nou
+        if os.path.getsize(REGISTRE) > MIDA_MAX_REGISTRE:
+            os.replace(REGISTRE, os.path.join(DADES, 'registre-anterior.txt'))
+    except OSError:
         pass
     with open(REGISTRE, 'a', encoding='utf-8') as f:
         f.write(linia + '\n')
