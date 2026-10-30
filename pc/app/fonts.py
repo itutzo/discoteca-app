@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Consultes a AllMusic, Discogs, Last.fm i Apple Music."""
+"""Consultes a AllMusic, Discogs, MusicBrainz, Last.fm i Apple Music."""
 import json, re, time, random, urllib.request, urllib.parse, urllib.error, gzip, subprocess, sys
 
 try:
@@ -449,6 +449,27 @@ def lastfm_info(artista, key):
             tags.append([x['name'].strip().lower(), n])
     return {'o': oients, 't': tags}
 
+
+
+def lastfm_temes(artista, titol, key):
+    """Temes d'un disc a Last.fm amb la durada (per calcular el bitrate quan cap altra font la dona)."""
+    if not key:
+        return []
+    r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
+        {'method': 'album.getinfo', 'artist': artista, 'album': titol, 'api_key': key, 'format': 'json',
+         'autocorrect': 1}), json_=True) or {}
+    t = ((r.get('album') or {}).get('tracks') or {}).get('track') or []
+    if isinstance(t, dict):         # un disc d'un sol tema no ve en llista
+        t = [t]
+    out = []
+    for x in t:
+        try:
+            s = int(x.get('duration') or 0)
+        except (TypeError, ValueError):
+            s = 0
+        out.append({'n': str((x.get('@attr') or {}).get('rank') or ''), 'titol': x.get('name') or '',
+                    'durada': f'{s // 60}:{s % 60:02d}' if s else ''})
+    return out
 
 # ---------------- Apple Music ----------------
 AP = 'https://music.apple.com'
