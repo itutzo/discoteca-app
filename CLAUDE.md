@@ -16,6 +16,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 ### PC (`pc/app`)
 - `servidor.py`: servidor HTTP a `127.0.0.1:8800`, només local. Comprova la capçalera Host (contra el DNS rebinding) i l'Origin i el Sec-Fetch-Site als POST. En arrencar, torna a registrar la tasca programada amb la ruta actual de la carpeta.
 - `completar.py`: completa dades automàticament. Té els modes `nit` (el de la tasca diària de les 14:30), `tot`, `pendents`, `disc`, `discogs`, `nas`, `duplicats` i `perfil`. Cada tanda és de 300 discos com a mínim.
+  - A cada execució, `tradueix_catala()` passa al català la `qualitat` i les `notes` que encara són en castellà (només valors exactes de la llista; el primer cop deixa una còpia a `dades/copies/catala-discs-abans.json`).
 - `fonts.py`:
   - **AllMusic** sempre amb Playwright i el **Chrome** instal·lat (`channel='chrome'`, finestra fora de la pantalla), perquè bloqueja els altres clients.
   - **Discogs** per l'API amb token, **Last.fm** (`getsimilar`, `getinfo`, `gettoptags` i `album.getinfo` per a les durades) i **Apple Music** (HTML).
@@ -32,6 +33,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - Llegeix `/Personal/Discoteca/dades/*.json` i les miniatures amb `get_thumbnail_batch`.
 - Els canvis es desen com a arxius `dades/mobil/<ts>-<rand>.json` de tipus `disc` (amb `patch`; el valor `null` esborra el camp), `esborra`, `artista` o `ignora`. El PC els incorpora.
 - Té una CSP que limita les connexions a Dropbox, MusicBrainz, Wikidata i la Wikipedia. Si s'afegeix una font nova, cal afegir-la al `connect-src`.
+- Les caselles del formulari no fan servir l'autoemplenat del navegador: proposen suggeriments en català (`SUGG`) i, per a gènere i estil, els valors del catàleg.
 - **La interfície està duplicada**: qualsevol canvi a `pc/app/web/index.html` s'ha d'aplicar també a `mobil/index.html`, i al revés.
 
 ## Dades (`dades/`)
