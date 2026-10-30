@@ -444,33 +444,41 @@ def bitrate_estimat(d, temes_am, temes_dg, variable=False, temes_mb=(), temes_ex
     return None
 
 
+RECS_V = 2      # 2: amb l'enllaç de cada font i discos dels artistes similars de Last.fm
+
+
 def recomana(d, nom_art, am, dg):
     recs = llegeix('recs.json', {})
     k = str(d['artista'])
     vell = recs.get(k)
     if vell and vell.get('updatedAt', '') > (datetime.date.today() - datetime.timedelta(days=180)).isoformat() \
-            and len(vell.get('fonts', [])) >= 3 and (not am or 'AllMusic' in vell.get('fonts', [])):
+            and len(vell.get('fonts', [])) >= 3 and (not am or 'AllMusic' in vell.get('fonts', [])) \
+            and vell.get('v', 1) >= RECS_V and (not LFM or 'Last.fm' in vell.get('fonts', [])):
         return
     me = N(nom_art)
     A, D = {}, {}
 
-    def addA(nom, font, pos):
+    def addA(nom, font, pos, url=''):
         n = N(nom)
         if not n or n == me:
             return
-        e = A.setdefault(n, {'nom': re.sub(r'\s*\(\d+\)$', '', nom), 'fonts': [], 'pos': 0})
+        e = A.setdefault(n, {'nom': re.sub(r'\s*\(\d+\)$', '', nom), 'fonts': [], 'pos': 0, 'urls': {}})
         if font not in e['fonts']:
             e['fonts'].append(font); e['pos'] += pos
+        if url and font not in e['urls']:
+            e['urls'][font] = url
 
-    def addD(titol, artista, font, pos, any_=''):
+    def addD(titol, artista, font, pos, any_='', url=''):
         # sense artista = un altre disc del mateix artista (Apple Music no repeteix el nom): no és una descoberta
         if not titol or not str(artista or '').strip() or N(artista) == me:
             return
         t = re.sub(r'\s*[\(\[](deluxe|remaster|expanded|\d+th anniversary|anniversary)[^\)\]]*[\)\]]', '', titol, flags=re.I).replace(' - EP', '').strip()
         key = N(artista) + '|' + N(t)
-        e = D.setdefault(key, {'artista': re.sub(r'\s*\(\d+\)$', '', artista), 'titol': t, 'any': any_, 'fonts': [], 'pos': 0})
+        e = D.setdefault(key, {'artista': re.sub(r'\s*\(\d+\)$', '', artista), 'titol': t, 'any': any_, 'fonts': [], 'pos': 0, 'urls': {}})
         if font not in e['fonts']:
             e['fonts'].append(font); e['pos'] += pos
+        if url and font not in e['urls']:
+            e['urls'][font] = url
         if any_ and not e['any']:
             e['any'] = any_
 
@@ -479,20 +487,25 @@ def recomana(d, nom_art, am, dg):
         usades.append('AllMusic')
         for p, x in enumerate(am.get('artistes_similars', [])): addA(x, 'AllMusic', p)
         for p, x in enumerate(am.get('similars', [])): addD(x['titol'], x['artista'], 'AllMusic', p, x.get('any', ''))
+    tinc = {N(v) for v in llegeix('artistes.json', {}).values()}
     if LFM:
         try:
-            L = fonts.lastfm_similars(nom_art, LFM)
+            L = fonts.lastfm_similars(nom_cerca(nom_art), LFM)
             if L:
                 usades.append('Last.fm')
-            for p, x in enumerate(L): addA(x, 'Last.fm', p)
+            for p, x in enumerate(L): addA(x['nom'], 'Last.fm', p, x['url'])
+            # discos: els més escoltats dels primers artistes similars que encara no tens
+            for p, x in enumerate([x for x in L if N(x['nom']) not in tinc][:8]):
+                for q, al in enumerate(fonts.lastfm_discos(x['nom'], LFM)):
+                    addD(al['titol'], al['artista'], 'Last.fm', p + q, url=al['url'])
         except Exception as e:
             log(f'  Last.fm: error {e!r}')
     try:
-        ap = fonts.apple(nom_art, d.get('titol', ''))
+        ap = fonts.apple(nom_cerca(nom_art), d.get('titol', ''))
         if ap['artistes'] or ap['discos']:
             usades.append('Apple Music')
-        for p, x in enumerate(ap['artistes']): addA(x, 'Apple Music', p)
-        for p, x in enumerate(ap['discos']): addD(x['titol'], x['artista'], 'Apple Music', p)
+        for p, x in enumerate(ap['artistes']): addA(x['nom'], 'Apple Music', p, x['url'])
+        for p, x in enumerate(ap['discos']): addD(x['titol'], x['artista'], 'Apple Music', p, url=x['url'])
     except Exception as e:
         log(f'  Apple Music: error {e!r}')
     if dg:
@@ -500,7 +513,7 @@ def recomana(d, nom_art, am, dg):
         if rr:
             usades.append('Discogs')
         for p, x in enumerate(rr):
-            addD(x['titol'], x['artista'], 'Discogs', p)
+            addD(x['titol'], x['artista'], 'Discogs', p, url=x.get('url', ''))
             addA(x['artista'], 'Discogs', p)
     for e in D.values():
         a = A.get(N(e['artista']))
@@ -516,9 +529,9 @@ def recomana(d, nom_art, am, dg):
     if not A and not D:
         return
     recs = llegeix('recs.json', {})
-    recs[k] = {'artista': nom_art, 'fonts': usades, 'updatedAt': AVUI,
-               'artistes': [{x: e[x] for x in ('nom', 'fonts', 'score')} for e in srt(A.values())][:40],
-               'discos': [{x: e[x] for x in ('artista', 'titol', 'any', 'fonts', 'score')} for e in srt(D.values())][:40]}
+    recs[k] = {'artista': nom_art, 'fonts': usades, 'updatedAt': AVUI, 'v': RECS_V,
+               'artistes': [{x: e[x] for x in ('nom', 'fonts', 'score', 'urls')} for e in srt(A.values())][:40],
+               'discos': [{x: e[x] for x in ('artista', 'titol', 'any', 'fonts', 'score', 'urls')} for e in srt(D.values())][:40]}
     desa('recs.json', recs)
 
 
@@ -816,16 +829,63 @@ def sincronitza_discogs():
 EXT = {'.mp3': 'mp3', '.flac': 'flac', '.m4a': 'aac', '.wma': 'wma', '.wav': 'wav', '.ogg': 'ogg', '.ape': 'ape'}
 
 
+# número de pista dins del nom de l'arxiu: «Artista - Disc - 03 - Títol», «03. Títol», «12 Títol»
+PISTA = (re.compile(r'.*\s[-–—]\s*(\d{1,3})\s*(?:[-–—]|\.(?!\d))\s*(\S.*)$'),
+         re.compile(r'^(\d{1,3})\s*(?:[-–—]|\.(?!\d))\s*(\S.*)$'),
+         re.compile(r'^(?:.*\s[-–—]\s*)?(\d{1,3})\s+(\S.*)$'))
+
+
+def num_titol(nom):
+    for r in PISTA:
+        m = r.match(nom)
+        if m:
+            return m.group(1).lstrip('0') or '0', m.group(2).strip()
+    return '', nom
+
+
 def temes_de_noms(arxius):
     out = []
     multi = len({s for s, _ in arxius}) > 1 or any(re.search(r'- CD\d+ -', a) for _, a in arxius)
-    for sub, a in sorted(arxius):
+    for sub, a in arxius:
         nom = os.path.splitext(a)[0]
         cd = re.search(r'(?:CD|Disc)\s*(\d+)', sub + ' ' + nom, re.I)
-        m = re.search(r'(?:^|- )(\d{1,3})\s*[-.]\s*(.+)$', nom)
-        num, tit = ((m.group(1).lstrip('0') or '0'), m.group(2).strip()) if m else ('', nom)
-        out.append([num, tit, '', ('CD' + cd.group(1)) if (multi and cd) else '', 0, 0])
-    return out
+        num, tit = num_titol(nom)
+        clau = (sub, int(cd.group(1)) if cd else 0, int(num) if num else 10 ** 4, a.lower())
+        out.append((clau, [num, tit, '', ('CD' + cd.group(1)) if (multi and cd) else '', 0, 0]))
+    return [t for _, t in sorted(out)]       # per número de pista, no per l'ordre alfabètic dels arxius
+
+
+def arxius_de(ruta):
+    """Només els noms dels arxius de música (no obre ni descarrega res)."""
+    arxius = []
+    for root, _, files in os.walk(ruta):
+        sub = os.path.relpath(root, ruta)
+        arxius += [('' if sub == '.' else sub, f) for f in files if os.path.splitext(f)[1].lower() in EXT]
+    return arxius
+
+
+def firma_temes(temes):
+    return '|'.join(f'{t[0]}.{t[1]}' for t in temes)
+
+
+def relleeix_temes(d, ruta, mtime):
+    """Els temes que es van treure dels noms dels arxius es tornen a llegir si has canviat els arxius.
+    Si els has corregit a la Discoteca (la firma ja no coincideix), no es toquen."""
+    d['nas_m'] = mtime
+    nous = temes_de_noms(arxius_de(ruta))
+    if not nous:
+        return False
+    vells = [list(t) + [''] * (6 - len(t)) for t in d.get('temes', [])]
+    for t in nous:      # conserva el compositor i les marques de cada tema
+        o = max(vells, key=lambda v: sim(v[1], t[1]), default=None)
+        if o and sim(o[1], t[1]) <= 0.75:
+            o = next((v for v in vells if v[0] and v[0] == t[0] and v[3] == t[3]), None)
+        if o:
+            t[2], t[4], t[5] = o[2], o[4], o[5]
+    canvia = firma_temes(nous) != firma_temes(vells)
+    d['temes'] = nous
+    d['nas_t'] = firma_temes(nous)
+    return canvia
 
 
 def nums(t):
@@ -889,7 +949,7 @@ def elimina_duplicats():
             return (len(d.get('fonts') or {}) * 10 + sum(1 for c in CLAUS if d.get(c))
                     + (5 if d.get('carpeta') in al_nas else 0) + (3 if d.get('classificacio') else 0)
                     - (8 if d.get('no_trobat') else 0))
-        fora, informe = set(), []
+        fora, informe, repetides = set(), [], []
         for g in grups:
             g.sort(key=punts, reverse=True)
             w = g[0]
@@ -918,6 +978,9 @@ def elimina_duplicats():
                         w['cv'] = int(time.time())
                 if w.get('estat') == 'pendent' and x.get('estat') != 'pendent' and x.get('fonts'):
                     w.pop('estat', None)
+                # dues carpetes al NAS per al mateix disc: la que no es queda no s'ha de tornar a afegir cada dia
+                if x.get('carpeta') in al_nas and x['carpeta'] != w.get('carpeta'):
+                    repetides.append(x['carpeta'])
                 fora.add(id(x))
             informe.append(f"{' + '.join(noms_abans)}  →  queda «{nom(w)} - {w.get('titol', '')}»")
         discs = [d for d in discs if id(d) not in fora]
@@ -927,6 +990,12 @@ def elimina_duplicats():
             artistes.pop(k)
         desa('artistes.json', artistes)
         desa('discs.json', discs)
+        if repetides:
+            ig = llegeix('ignorats.json', {'artistes': [], 'discos': []})
+            L = ig.setdefault('carpetes', [])
+            L += [c for c in repetides if c not in L]
+            desa('ignorats.json', ig)
+            informe.append('Carpetes repetides al NAS que ja no s\'afegiran: ' + '; '.join(repetides))
     with open(os.path.join(comu.DADES, 'duplicats_informe.txt'), 'a', encoding='utf-8') as fh:
         fh.write(f"\n{datetime.datetime.now():%Y-%m-%d %H:%M}\n" + '\n'.join(informe) + '\n')
     log(f'Duplicats: {len(fora)} entrades ajuntades (detall a dades\\duplicats_informe.txt)')
@@ -954,13 +1023,10 @@ def llegeix_nas():
     for e in os.scandir(arrel):
         if not e.is_dir() or e.name in per_carpeta or e.name.startswith('.') or e.name in descartades:
             continue
-        arxius = []
-        for root, _, files in os.walk(e.path):          # només llista noms
-            sub = os.path.relpath(root, e.path)
-            arxius += [('' if sub == '.' else sub, f) for f in files if os.path.splitext(f)[1].lower() in EXT]
+        arxius = arxius_de(e.path)          # només llista noms
         if not arxius:
             continue
-        m = re.match(r'^(.+?)\s*-\s*(\d{4})\s*-\s*(.+)$', e.name) or re.match(r'^(.+?)\s*-\s*()(.+)$', e.name)
+        m = re.match(r'^(.+?)\s*[-–—]\s*(\d{4})\s*[-–—]\s*(.+)$', e.name) or re.match(r'^(.+?)\s*[-–—]\s*()(.+)$', e.name)
         art, any_, tit = (m.group(1).strip(), m.group(2), m.group(3).strip()) if m else (e.name, '', e.name)
         sup = sorted({EXT[os.path.splitext(f)[1].lower()] for _, f in arxius})
         # carpeta reanomenada? el disc antic passa a apuntar a la nova i agafa els noms corregits
@@ -988,18 +1054,104 @@ def llegeix_nas():
             if not d.get('temes'):
                 d['temes'] = temes_de_noms(arxius)
                 d['auto'] = sorted(set(d.get('auto', [])) | {'temes'})
+                d['nas_t'], d['nas_m'] = firma_temes(d['temes']), e.stat().st_mtime
             continue
         dates = [datetime.date.fromtimestamp(e.stat().st_mtime).isoformat()]
         d = {'id': 'nas' + str(int(time.time() * 1000)) + str(nous), 'artista': id_artista(art, artistes), 'titol': tit,
              'suport': ', '.join(sup), 'data': dates[0], 'estat': 'pendent', 'carpeta': e.name,
              'temes': temes_de_noms(arxius), 'interprets': [], 'auto': ['titol', 'suport', 'temes', 'data'] + (['any'] if any_ else [])}
+        d['nas_t'], d['nas_m'] = firma_temes(d['temes']), e.stat().st_mtime
         if any_:
             d['any'] = any_
         discs.append(d)
         per_art.setdefault(N(art), []).append(d)
         nous += 1
+    # discos amb els temes trets dels noms dels arxius: si has canviat els arxius, es tornen a llegir
+    mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
+    relleguts = []
+    for d in discs:
+        c = d.get('carpeta')
+        if c in mtimes and 'temes' in d.get('auto', []) and d.get('nas_t') == firma_temes(d.get('temes', [])) \
+                and d.get('nas_m') != mtimes[c]:
+            try:
+                if relleeix_temes(d, os.path.join(arrel, c), mtimes[c]):
+                    relleguts.append(f"{artistes.get(str(d['artista']), '')} - {d.get('titol', '')}")
+            except OSError as e:
+                log(f'NAS: no puc llegir {c} ({e})')
     desa('discs.json', discs)
     log(f'NAS: {nous} discos nous')
+    if relleguts:
+        log(f"NAS: temes tornats a llegir dels arxius: {'; '.join(relleguts)}")
+
+
+def _temes_antics(arxius):
+    """Com llegia els temes la versió anterior (per reconèixer els que encara són els noms dels arxius)."""
+    out = []
+    for sub, a in sorted(arxius):
+        m = re.search(r'(?:^|- )(\d{1,3})\s*[-.]\s*(.+)$', os.path.splitext(a)[0])
+        out.append(m.group(2).strip() if m else os.path.splitext(a)[0])
+    return out
+
+
+def arregla_noms_nas():
+    """Un sol cop: (1) artistes creats amb l'any enganxat perquè la carpeta duia un guió llarg
+    («Jan Stenfors – 1996 - Vinegar Blood»); (2) temes llegits dels noms dels arxius que van quedar sense número
+    o desordenats; (3) les recomanacions dels discos nous es tornen a buscar (ara també amb els discos de Last.fm)."""
+    fetes = llegeix('migracions.json', {})
+    if fetes.get('noms_nas'):
+        return
+    arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
+    if not os.path.isdir(arrel):
+        return          # sense la carpeta de música, ja es farà un altre dia
+    with comu.BLOC:
+        artistes = llegeix('artistes.json', {})
+        discs = llegeix('discs.json', [])
+        log_ = []
+        for k, nom in list(artistes.items()):
+            m = re.match(r'^(.+?)\s*[–—]\s*(\d{4})$', nom)
+            if not m:
+                continue
+            bo = m.group(1).strip()
+            dest = next((k2 for k2, v in artistes.items() if k2 != k and N(v) == N(bo)), None)
+            for d in discs:
+                if str(d.get('artista')) == k:
+                    if dest:
+                        d['artista'] = dest
+                    if not d.get('any'):
+                        d['any'] = m.group(2)
+                    d['reintenta'] = True
+            if dest:
+                del artistes[k]
+            else:
+                artistes[k] = bo
+            log_.append(f'«{nom}» → «{bo}»')
+        relleguts = 0
+        for d in discs:
+            c = d.get('carpeta')
+            if not c or 'temes' not in d.get('auto', []) or d.get('nas_t'):
+                continue
+            ruta = os.path.join(arrel, c)
+            if not os.path.isdir(ruta):
+                continue
+            try:
+                arxius = arxius_de(ruta)
+                temes = d.get('temes', [])
+                de_noms = [t[1] for t in temes] == _temes_antics(arxius) or any(not str(t[0]).strip() for t in temes)
+                if arxius and de_noms:
+                    relleeix_temes(d, ruta, os.stat(ruta).st_mtime)
+                    relleguts += 1
+            except OSError:
+                pass
+        for d in discs:
+            if d.get('data', '') >= '2026-10-20':
+                d['reintenta'] = True
+        desa('artistes.json', artistes)
+        desa('discs.json', discs)
+    if log_:
+        log(f"NAS: artistes corregits: {'; '.join(log_)}")
+    log(f'NAS: {relleguts} discos amb els temes tornats a llegir dels noms dels arxius')
+    fetes['noms_nas'] = AVUI
+    desa('migracions.json', fetes)
 
 
 def unifica_variables():
@@ -1047,6 +1199,10 @@ def main():
                     pas()
                 except Exception as e:
                     log(f'{nom}: error {e!r}')
+        try:
+            arregla_noms_nas()
+        except Exception as e:
+            log(f'NAS: error arreglant noms {e!r}')
         try:
             marca_reintents_allmusic()
         except Exception as e:

@@ -116,6 +116,7 @@ ul.barres li{display:grid;grid-template-columns:120px 1fr;align-items:center;gap
 ul.barres i{display:block;height:8px;border-radius:4px;background:var(--accent);opacity:.8}
 ul.disc li{padding:6px 0;border-bottom:1px dashed var(--line);min-width:0}
 ul.disc a{color:var(--fg);font-weight:600;text-decoration:none}
+ul.disc a.tag{color:var(--muted);font-weight:500}ul.disc a.tag:hover{color:var(--accent);border-color:var(--accent);text-decoration:none}
 ul.disc a:hover{color:var(--accent);text-decoration:underline}
 .who2{color:var(--muted);font-size:13px}
 .srcs{font-size:13px;color:var(--muted);margin-top:20px}.srcs a{color:var(--accent)}
@@ -603,6 +604,21 @@ function renderSheet(){
   sh.scrollTop = 0;
   loadDiscover(d);
 }
+// cada recomanació s'obre a la font que diu la seva etiqueta: la pàgina exacta si la tenim, si no la cerca d'aquella web
+const CERCA = {
+  'Apple Music': q => 'https://music.apple.com/es/search?term=' + encodeURIComponent(q),
+  'Discogs': q => 'https://www.discogs.com/search/?type=all&q=' + encodeURIComponent(q),
+  'Last.fm': q => 'https://www.last.fm/search?q=' + encodeURIComponent(q),
+  'MusicBrainz': q => 'https://musicbrainz.org/search?type=release_group&query=' + encodeURIComponent(q),
+  'AllMusic': q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q),
+};
+const enllacFont = (x, f) => {
+  f = f || [...(x.fonts||[])][0] || 'Discogs';
+  if(x.urls?.[f]) return urlSegur(x.urls[f]);
+  const art = String(x.artista||'').includes(',') ? String(x.artista).split(',')[0] : (x.artista||'');   // «A, B & C»: amb el primer n'hi ha prou
+  return esc((CERCA[f] || CERCA['Discogs'])(x.titol ? `${art} ${x.titol}`.trim() : x.nom));
+};
+const chipsFont = x => [...(x.fonts||[])].map(f => `<a class="tag" href="${enllacFont(x, f)}" target="_blank" rel="noopener" title="Obre-ho a ${esc(f)}">${esc(f)}</a>`).join('');
 const recCache = new Map();
 async function loadDiscover(d){
   const box = $('#discover'); if(!box) return;
@@ -618,10 +634,8 @@ async function loadDiscover(d){
   const A = rank(r.artistes||[]).filter(x=>!have.has(tok2(x.nom))).slice(0,5);
   const seen = new Set();
   const D = rank(r.discos||[]).filter(x=>tok2(x.artista) && !have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
-  const chips = f => (f||[]).map(x=>`<span class="tag">${esc(x)}</span>`).join('');
-  const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
-  box.innerHTML = (A.length?`<h3 class="sec">Per descobrir · artistes</h3><ul class="disc">${A.map(x=>`<li><a href="${am(x.nom)}" target="_blank" rel="noopener">${esc(x.nom)}</a>${chips(x.fonts)}<button class="ign" type="button" data-ign="artistes" data-clau="${esc(tok2(x.nom))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'')
-    + (D.length?`<h3 class="sec">Per descobrir · discos</h3><ul class="disc">${D.map(x=>`<li><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span>${chips(x.fonts)}<button class="ign" type="button" data-ign="discos" data-clau="${esc(tok2(x.artista)+'|'+tok2(x.titol))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'');
+  box.innerHTML = (A.length?`<h3 class="sec">Per descobrir · artistes</h3><ul class="disc">${A.map(x=>`<li><a href="${enllacFont(x)}" target="_blank" rel="noopener">${esc(x.nom)}</a>${chipsFont(x)}<button class="ign" type="button" data-ign="artistes" data-clau="${esc(tok2(x.nom))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'')
+    + (D.length?`<h3 class="sec">Per descobrir · discos</h3><ul class="disc">${D.map(x=>`<li><a href="${enllacFont(x)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span>${chipsFont(x)}<button class="ign" type="button" data-ign="discos" data-clau="${esc(tok2(x.artista)+'|'+tok2(x.titol))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'');
 }
 let igCache = null;
 const ignorats = () => igCache || (igCache = api('/api/ignorats').catch(()=>({artistes:[],discos:[]})));
@@ -694,6 +708,7 @@ async function calculaRecs(){
       c.ev += pes * (x.score ?? (x.fonts?.length||1)) * Math.max(0.3, 1 - i/50);
       c.per.set(nomA, Math.max(c.per.get(nomA)||0, pes));
       (x.fonts||[]).forEach(f => c.fonts.add(f));
+      c.urls = {...(x.urls||{}), ...(c.urls||{})};
       M.set(k, c);
     };
     (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k)) suma(cand, k, x, i, {nom:x.nom}); });
@@ -734,7 +749,6 @@ async function obreRecs(){
   const etiq = c => (c.encaix != null ? `<span class="fit" title="Quant s'assembla al teu perfil musical">${c.encaix}%</span>` : '')
     + c.tags.map(e => `<span class="tag">${esc(e)}</span>`).join('')
     + (c.oients != null && c.oients < 150000 ? '<span class="tag nou">Poc conegut</span>' : '');
-  const am = q => 'https://www.allmusic.com/search/all/' + encodeURIComponent(q);
   const ign = (t, k) => `<button class="ign" type="button" data-ign="${t}" data-clau="${esc(k)}" title="Descarta: no me'l tornis a proposar">✕</button>`;
   const max = I.tags[0]?.[1] || 1;
   const perfilHTML = I.tags.length ? `<div class="ident">
@@ -746,7 +760,7 @@ async function obreRecs(){
     + `<p class="who2" style="margin:14px 0 0">Propostes que no tens, ordenades pel % d'encaix amb aquest perfil. Els molt famosos baixen, perquè segurament ja els coneixes. El nom obre la biografia; ✕ el descarta per sempre.</p>`
     + (!base ? '<p class="notice">Encara no hi ha propostes: es van recollint a mesura que el PC completa els discos.</p>' : '')
     + (A.length ? `<h3 class="sec">Artistes per a tu · ${A.length}</h3><ul class="disc recs">${A.map(x => `<li><div><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button> ${etiq(x)}<br>${perque(x)}</div>${ign('artistes', x.k)}</li>`).join('')}</ul>` : '')
-    + (D.length ? `<h3 class="sec">Discos per a tu · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${am(x.artista+' '+x.titol)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
+    + (D.length ? `<h3 class="sec">Discos per a tu · ${D.length}</h3><ul class="disc recs">${D.map(x => `<li><div><a href="${enllacFont(x)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span> ${etiq(x)}<br>${perque(x)}</div>${ign('discos', x.k)}</li>`).join('')}</ul>` : '')
     + `<p class="who2" style="margin-top:16px">Perfil fet amb ${I.ambLF} dels teus ${I.total} artistes · propostes recollides de ${base}. Cada dia el PC n'hi afegeix més.</p>`;
 }
 async function ignora(tipus, clau){
