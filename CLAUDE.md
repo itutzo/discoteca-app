@@ -37,8 +37,8 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - **La interfície està duplicada**: qualsevol canvi a `pc/app/web/index.html` s'ha d'aplicar també a `mobil/index.html`, i al revés.
 
 ## Dades (`dades/`)
-- `discs.json`: llista de discos. Camps principals: `id`, `artista` (és l'id que apunta a `artistes.json`), `titol`, `any`, `suport` (`"mp3, cd, lp"`), `carpeta` (nom de la carpeta al NAS), `temes` `[[n, títol, compositor, '', 0, 0]]`, `interprets`, `classificacio`, `notes`, `clasamg`, `genere`, `estil`, `segell`, `catno`, `barcode`, `edicio`, `bitrate`, `caratula`/`cv`, `estat:"pendent"`, `fonts`, `auto`, `proc`, `no_trobat`, `reintenta`, `am_error` (data en què AllMusic no va deixar consultar el disc: es torna a provar) i `br`.
-- `artistes.json` `{id: nom}` · `recs.json` (recomanacions per artista) · `lastfm.json` (etiquetes i oients) · `ignorats.json` `{artistes, discos, carpetes}`.
+- `discs.json`: llista de discos. Camps principals: `id`, `artista` (és l'id que apunta a `artistes.json`), `titol`, `any`, `suport` (`"mp3, cd, lp"`), `carpeta` (nom de la carpeta al NAS), `temes` `[[n, títol, compositor, '', 0, 0]]`, `interprets`, `classificacio`, `notes`, `clasamg`, `genere`, `estil`, `segell`, `catno`, `barcode`, `edicio`, `bitrate`, `caratula`/`cv`, `estat:"pendent"`, `fonts`, `auto`, `proc`, `no_trobat`, `reintenta`, `am_error` (data en què AllMusic no va deixar consultar el disc: es torna a provar), `br`, i `nas_t`/`nas_m` (firma dels temes llegits dels noms dels arxius i data de la carpeta: si l'Ignasi canvia els arxius, els temes es tornen a llegir; si els ha corregit a l'app, la firma ja no coincideix i no es toquen).
+- `artistes.json` `{id: nom}` · `recs.json` (recomanacions per artista; `v: 2` porta `urls` per font, i l'enllaç de cada recomanació obre la font de la seva etiqueta) · `lastfm.json` (etiquetes i oients) · `ignorats.json` `{artistes, discos, carpetes}`.
 - `registre.txt` (a partir de 2 MB passa a `registre-anterior.txt`), `migracions.json` (canvis d'un sol cop ja fets), `estat.json`, `duplicats_informe.txt` i `discogs_informe.txt`.
 
 ## Normes de l'Ignasi (obligatòries)

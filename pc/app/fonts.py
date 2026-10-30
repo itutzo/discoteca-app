@@ -330,9 +330,11 @@ class Discogs:
             return []
         out = []
         for li in (s.select('#release-recommendations li') if s else []):
-            t = [txt(a) for a in li.select('a') if txt(a)]
-            if t:
-                out.append({'titol': t[0], 'artista': re.sub(r'\s*\(\d+\)$', '', t[1]) if len(t) > 1 else ''})
+            links = [a for a in li.select('a') if txt(a)]
+            if links:
+                href = links[0].get('href') or ''
+                out.append({'titol': txt(links[0]), 'artista': re.sub(r'\s*\(\d+\)$', '', txt(links[1])) if len(links) > 1 else '',
+                            'url': urllib.parse.urljoin('https://www.discogs.com', href) if href else ''})
         return out
 
     def coleccio(self, usuari):
@@ -424,7 +426,22 @@ def lastfm_similars(artista, key):
         return []
     r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
         {'method': 'artist.getsimilar', 'artist': artista, 'api_key': key, 'format': 'json', 'limit': 25, 'autocorrect': 1}), json_=True) or {}
-    return [a['name'] for a in r.get('similarartists', {}).get('artist', [])]
+    return [{'nom': a['name'], 'url': a.get('url') or ''} for a in r.get('similarartists', {}).get('artist', [])]
+
+
+def lastfm_discos(artista, key, n=2):
+    """Els discos més escoltats d'un artista a Last.fm (per proposar discos dels artistes similars)."""
+    if not key:
+        return []
+    r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
+        {'method': 'artist.gettopalbums', 'artist': artista, 'api_key': key, 'format': 'json', 'limit': n + 3,
+         'autocorrect': 1}), json_=True) or {}
+    out = []
+    for x in (r.get('topalbums') or {}).get('album', []):
+        t = (x.get('name') or '').strip()
+        if t and t.lower() not in ('(null)', 'null', 'undefined') and len(out) < n:
+            out.append({'titol': t, 'artista': (x.get('artist') or {}).get('name') or artista, 'url': x.get('url') or ''})
+    return out
 
 
 def lastfm_info(artista, key):
@@ -497,7 +514,11 @@ def apple(artista, titol):
         d = sopa(urllib.parse.urljoin(AP, a))
         box = _seccio(d, 'Artistas similares|Similar Artists') if d else None
         if box:
-            out['artistes'] = list(dict.fromkeys(txt(x) for x in box.select('a[href*="/artist/"]') if txt(x)))[:25]
+            vist = {}
+            for x in box.select('a[href*="/artist/"]'):
+                if txt(x) and txt(x) not in vist:
+                    vist[txt(x)] = urllib.parse.urljoin(AP, x['href'].split('?')[0])
+            out['artistes'] = [{'nom': k, 'url': v} for k, v in vist.items()][:25]
     s = sopa(AP + '/es/search?term=' + urllib.parse.quote(f'{artista} {titol}'))
     b = next((x['href'] for x in (s.select('a[href*="/album/"]') if s else []) if N(titol) in N(x.get_text())), None)
     if b:
@@ -511,7 +532,7 @@ def apple(artista, titol):
                 t = txt(al)
                 ar = li.select_one('a[href*="/artist/"]')
                 nom = txt(ar) if ar else txt(li).replace(t, '').strip()
-                out['discos'].append({'titol': t, 'artista': nom})
+                out['discos'].append({'titol': t, 'artista': nom, 'url': urllib.parse.urljoin(AP, al['href'].split('?')[0])})
     return out
 
 
