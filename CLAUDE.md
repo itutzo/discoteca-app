@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Discoteca: context per a Claude
 
 Catàleg personal de discos de l'Ignasi (uns 3.000 enregistraments en MP3, CD i vinil). Substitueix una base de dades d'Access antiga, que es conserva com a còpia de seguretat i **no s'ha de tocar**.
@@ -36,6 +40,24 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - Les caselles del formulari no fan servir l'autoemplenat del navegador: proposen suggeriments en català (`SUGG`) i, per a gènere i estil, els valors del catàleg.
 - **La interfície està duplicada**: qualsevol canvi a `pc/app/web/index.html` s'ha d'aplicar també a `mobil/index.html`, i al revés.
 
+## Ordres
+No hi ha build, linter ni tests automàtics. Abans de fer push:
+- `python3 -m py_compile pc/app/*.py` (comprovació de sintaxi).
+- Si s'ha tocat la interfície, comprovar que `pc/app/web/index.html` i `mobil/index.html` tenen el mateix canvi (`diff` entre els dos ajuda a veure-ho).
+
+Al PC de l'Ignasi (els `.bat` de `pc/` ho fan per ell):
+- `python app\servidor.py`: obre la Discoteca (`Obrir Discoteca.bat`).
+- `python app\completar.py --mode <mode> [--n N] [--id ID]`: completa dades (`Completar ara.bat` fa `--mode nit`). `--id` és per al mode `disc`.
+- `python app\eines.py claus | programar 14:30 | desprogramar | acces`.
+
+`comu.ARREL` és la carpeta pare de `app/`: si s'executa des del repositori, crea `pc/dades/` i `pc/caratules/` (estan al `.gitignore`). Sense Windows, el NAS, Chrome ni els tokens, els modes de `completar.py` no fan res útil aquí; per provar la lògica, millor importar les funcions amb dades de prova.
+
+## Com flueixen les dades
+- La pàgina (`web/index.html`) llegeix tot el catàleg de cop amb `GET /api/dades` i escriu disc a disc amb `POST /api/disc`, `/api/esborra`, `/api/artista`, `/api/ignora` i `/api/caratula`. El botó de completar fa `POST /api/completa`, que llança `completar.py` com a subprocés.
+- El mòbil no passa pel servidor: llegeix els JSON del Dropbox i deixa els canvis a `dades/mobil/`, que `completar.py` (i el servidor) incorporen amb `comu.aplica_canvis_mobil()`.
+- `completar.py main()` fa, en aquest ordre: canvis del mòbil → `tradueix_catala()` → `unifica_variables()` (bitrate) → NAS, Discogs i duplicats (segons el mode, cada pas amb el seu `try`) → arreglar noms del NAS i reintents d'AllMusic → `tanda()` de discos → perfil de Last.fm. Un pas que falla no ha d'aturar els altres.
+- Tota escriptura de dades passa per `comu.desa()` (atòmica i amb reintents per Dropbox); no escriure els JSON amb `open()` directament.
+
 ## Dades (`dades/`)
 - `discs.json`: llista de discos. Camps principals: `id`, `artista` (és l'id que apunta a `artistes.json`), `titol`, `any`, `suport` (`"mp3, cd, lp"`), `carpeta` (nom de la carpeta al NAS), `temes` `[[n, títol, compositor, '', 0, 0]]`, `interprets`, `classificacio`, `notes`, `clasamg`, `genere`, `estil`, `segell`, `catno`, `barcode`, `edicio`, `bitrate`, `caratula`/`cv`, `estat:"pendent"`, `fonts`, `auto`, `proc`, `no_trobat`, `reintenta`, `am_error` (data en què AllMusic no va deixar consultar el disc: es torna a provar), `br`, i `nas_t`/`nas_m` (firma dels temes llegits dels noms dels arxius i data de la carpeta: si l'Ignasi canvia els arxius, els temes es tornen a llegir; si els ha corregit a l'app, la firma ja no coincideix i no es toquen).
 - `artistes.json` `{id: nom}` · `recs.json` (recomanacions per artista; `v: 2` porta `urls` per font, i l'enllaç de cada recomanació obre la font de la seva etiqueta) · `lastfm.json` (etiquetes i oients) · `ignorats.json` `{artistes, discos, carpetes}`.
@@ -52,6 +74,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - Abans de lliurar qualsevol document, netejar-ne les metadades.
 
 ## Com es desplega
+- Els canvis van per PR a aquest repositori. L'Ignasi no és informàtic: cal explicar-li en català què fa cada PR i no fer merge ni instal·lar res fins que digui «endavant».
 - **PC:** amb el pont cap al PC (escriptori de Claude enllaçat), copiar els arxius a `C:\Users\Usuario\Dropbox\Personal\Discoteca\app\`. Els canvis al servidor necessiten **Eines → Tanca la Discoteca** i tornar-la a obrir; els canvis a la pàgina, **Ctrl+F5**.
 - **Mòbil:** copiar `mobil/*` a l'arrel del repositori `itutzo/discoteca` i fer push a `main`. GitHub Pages ho publica en un parell de minuts.
 - Per fer canvis a les dades des de fora del PC, val més escriure arxius a `dades/mobil/` que no pas editar `discs.json` directament.
