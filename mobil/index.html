@@ -556,6 +556,7 @@ function similarsHTML(d){
   return (sa.length?`<h3 class="sec">Artistes similars a la teva col·lecció</h3><div class="others">${sa.map(([a,,best])=>`<button class="card" type="button" data-artist="${esc(a)}">${sleeveHTML(best,false)}<span class="t">${esc(artName(a))}</span><span class="a">${esc(best.estil||best.genere||'')}</span></button>`).join('')}</div>`:'')
     + (sd.length?`<h3 class="sec">Discos similars a la teva col·lecció</h3><div class="others">${sd.map(cardHTML).join('')}</div>`:'');
 }
+let simHTML = '';   // per no redibuixar (ni tornar a carregar les caràtules) si res no ha canviat
 async function milloraSimilars(d){
   try{
     const key = String(d.artista);
@@ -564,7 +565,10 @@ async function milloraSimilars(d){
     if(LF && !simLF){ simLF = LF; calculaIDF(LF); vecCache.clear(); }
     if(r && !simRecsArt.has(key)) simRecsArt.set(key, new Map((r.artistes||[]).map(x=>[tok2(x.nom), (x.fonts||[]).length])));
     const box = $('#similars');
-    if(box && current === d && !editing) box.innerHTML = similarsHTML(d);
+    if(box && current === d && !editing){
+      const html = similarsHTML(d);
+      if(simHTML !== html){ simHTML = html; box.innerHTML = html; box.querySelectorAll('.sleeve').forEach(el => io.observe(el)); }
+    }
   }catch{}
 }
 function trackList(d){ return d.temes || []; }
@@ -649,7 +653,7 @@ function renderSheet(){
     </div>
     ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?x[3]+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
-    <div id="similars">${similarsHTML(d)}</div>
+    <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>
     ${d.fonts?`<p class="srcs">Fonts: ${Object.entries(d.fonts).map(([k,u])=>`<a href="${urlSegur(u)}" target="_blank" rel="noopener">${esc(k==='allmusic'?'AllMusic':k)}</a>`).join(' · ')}</p>`:''}
     ${others.length?`<h3 class="sec">Altres gravacions de ${esc(artName(d.artista))} · ${others.length}</h3><div class="others">${others.map(cardHTML).join('')}</div>`:''}
