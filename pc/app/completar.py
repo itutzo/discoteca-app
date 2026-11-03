@@ -111,6 +111,7 @@ def corregeix_titol(d, nou, nom_art):
     vell = d.get('titol', '')
     if not nou or N(nou) == N(vell):
         return
+    nou = majuscules(nou)
     d.setdefault('titol_abans', vell)
     d['titol'] = nou
     log(f'  Títol mal escrit: «{nom_art} - {vell}» ara és «{nou}»')
@@ -122,41 +123,80 @@ def corregeix_titol(d, nou, nom_art):
         pass
 
 
+def majuscules(t):
+    """Cada paraula comença amb majúscula, com els noms de les carpetes i dels arxius («Live At The BBC»)."""
+    return ' '.join(w[:1].upper() + w[1:] for w in str(t).split(' '))
+
+
 def reanomena_carpeta(d, titol_vell=None):
-    """«Artista - Any - Títol mal escrit» -> «Artista - Any - Títol bo». Només si la carpeta té aquest format
-    i el títol de la carpeta és el que estava mal escrit. Si Windows no deixa (un arxiu obert), es torna a provar."""
+    """«Artista - Any - Títol mal escrit» -> «Artista - Any - Títol Bo», i a dins els arxius
+    «Artista - Títol mal escrit - 03 - Cançó.mp3» -> «Artista - Títol Bo - 03 - Cançó.mp3».
+    Només si la carpeta té aquest format i el seu títol és el que estava mal escrit. Si Windows no deixa
+    (un arxiu obert, el NAS no hi és), es torna a provar la nit següent."""
+    vell = titol_vell or d.get('titol_abans') or ''
     c = d.get('carpeta')
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     m = CARPETA.match(c or '')
     if not m or not os.path.isdir(os.path.join(arrel, c)):
         d.pop('carpeta_nova', None)
+        d.pop('arxius_pendents', None)
         return
-    if titol_vell is not None and N(m.group(3)) != N(titol_vell) and N(m.group(3)) != N(d.get('titol_abans')):
-        return              # el nom de la carpeta ja no és el mal escrit: no es toca
-    nou = f'{m.group(1).strip()} - {m.group(2)} - {nom_carpeta(d["titol"])}'
-    if nou == c:
-        d.pop('carpeta_nova', None)
-        return
-    if os.path.exists(os.path.join(arrel, nou)):
-        log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
-        d.pop('carpeta_nova', None)
-        return
-    try:
-        os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
-    except OSError as e:
-        d['carpeta_nova'] = nou
-        log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
-        return
-    d['carpeta'] = nou
+    nou_t = majuscules(nom_carpeta(d['titol']))
+    nou = f'{m.group(1).strip()} - {m.group(2)} - {nou_t}'
+    if nou != c:
+        if N(m.group(3)) != N(vell):
+            d.pop('carpeta_nova', None)
+            return          # el nom de la carpeta no és el mal escrit: no es toca
+        if os.path.exists(os.path.join(arrel, nou)):
+            log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+            d.pop('carpeta_nova', None)
+            return
+        try:
+            os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+        except OSError as e:
+            d['carpeta_nova'] = nou
+            log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+            return
+        d['carpeta'] = nou
+        log(f'  NAS: carpeta «{c}» reanomenada a «{nou}»')
     d.pop('carpeta_nova', None)
-    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}»')
+    if reanomena_arxius(os.path.join(arrel, nou), vell, nou_t):
+        d['arxius_pendents'] = True
+    else:
+        d.pop('arxius_pendents', None)
+
+
+def reanomena_arxius(ruta, vell, nou_t):
+    """Canvia només la part del títol del disc als noms dels arxius («Artista - Títol - 03 - Cançó.mp3»).
+    No obre ni descarrega res: només canvia el nom. Torna quants no s'han pogut canviar."""
+    if not N(vell):
+        return 0
+    canviats, errors = 0, 0
+    for root, _, files in os.walk(ruta):
+        for f in files:
+            base, ext = os.path.splitext(f)
+            m = re.match(r'^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*(\d{1,3}\s*[-–—]\s*.+)$', base)
+            if not m or N(m.group(2)) != N(vell) or ext.lower() not in EXT:
+                continue
+            nou = f'{m.group(1).strip()} - {nou_t} - {m.group(3).strip()}{ext}'
+            if nou == f or os.path.exists(os.path.join(root, nou)):
+                continue
+            try:
+                os.rename(os.path.join(root, f), os.path.join(root, nou))
+                canviats += 1
+            except OSError as e:
+                errors += 1
+                log(f'  NAS: ara no puc reanomenar «{f}» ({e}); s\'hi tornarà a provar')
+    if canviats:
+        log(f'  NAS: {canviats} arxius reanomenats a «{os.path.basename(ruta)}»')
+    return errors
 
 
 def reanomena_pendents():
-    """Carpetes que no es van poder reanomenar (un arxiu obert, el NAS no hi era): un altre intent."""
+    """Carpetes i arxius que no es van poder reanomenar (un arxiu obert, el NAS no hi era): un altre intent."""
     with comu.BLOC:
         discs = llegeix('discs.json', [])
-        pend = [d for d in discs if d.get('carpeta_nova')]
+        pend = [d for d in discs if d.get('carpeta_nova') or d.get('arxius_pendents')]
         for d in pend:
             reanomena_carpeta(d)
         if pend:
