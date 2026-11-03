@@ -90,6 +90,7 @@ ol.tracks li{display:grid;grid-template-columns:2.2em minmax(0,1fr) auto;gap:10p
 ol.tracks.discs li{grid-template-columns:5.8em minmax(0,1fr) auto}
 ol.tracks .n{font-family:var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 ol.tracks .c{color:var(--muted);font-size:13px;text-align:right}
+.star{color:var(--accent)}
 .tag{font:500 10px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:2px 5px;margin-left:6px;color:var(--muted)}
 .people{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 20px;font-size:14px}
 .people div{min-width:0}.people span{color:var(--muted)}
@@ -654,7 +655,7 @@ function renderSheet(){
   const d = current, sh = $('#sheet');
   const t = trackList(d), p = peopleList(d);
   const others = discs.filter(x => x.artista === d.artista && x.id !== d.id).sort((a,b)=>(a.any||'').localeCompare(b.any||''));
-  const sides = new Set(t.map(x=>x[3]).filter(Boolean));
+  const sides = new Set(t.map(x=>x[3]).filter(v=>v && v!=='*'));
   sh.innerHTML = `
   <div class="bar"><button class="btn ghost" type="button" data-close>← Tanca</button><span class="sp"></span>
     ${canWrite?'<button class="btn" type="button" data-edit>Edita</button>':''}</div>
@@ -682,7 +683,7 @@ function renderSheet(){
         </dl>
       </div>
     </div>
-    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' ':'')+(x[0]||''))}</span><span>${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span> ':''}${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>
@@ -989,7 +990,7 @@ async function onSave(e){
     rec.suport = [...SUPS.filter(([k])=>$('#s_'+k).checked).map(x=>x[0]), ...extra].join(', ') || null;
     rec.temes = readRows('#rowsT',3).map((x,i)=>[x[0]||String(i+1), x[1], x[2], '', 0, 0]);
     rec.interprets = readRows('#rowsP',2).map(x=>[x[0], x[1], 0]);
-    if(current){ const old = trackList(current); rec.temes = rec.temes.map(x => { const o = old.find(y=>y[1]===x[1]); return o ? [x[0],x[1],x[2],o[3],o[4],o[5]] : x; }); }
+    if(current){ const old = trackList(current); rec.temes = rec.temes.map(x => { const o = old.find(y=>y[1]===x[1]); return o ? [x[0],x[1],x[2],o[3],o[4],o[5]].concat(o[6]?[o[6]]:[]) : x; }); }
     // en ordre de pista (i de cara o CD), encara que les files s'hagin escrit desordenades
     const pista = x => /^\d+$/.test(String(x[0]).trim()) ? +x[0] : Infinity;
     rec.temes = rec.temes.map((x,i)=>[x,i]).sort((a,b)=>String(a[0][3]||'').localeCompare(String(b[0][3]||''), undefined, {numeric:true}) || pista(a[0])-pista(b[0]) || a[1]-b[1]).map(x=>x[0]);

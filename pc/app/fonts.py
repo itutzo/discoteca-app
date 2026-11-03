@@ -250,6 +250,7 @@ def allmusic(artista, titol):
 DAPI = 'https://api.discogs.com'
 SEMBLANCA_TITOL = 0.7    # títol mal escrit: com a mínim un 70 % semblant al de Discogs
 TEMES_IGUALS = 0.6       # ... i com a mínim el 60 % dels temes iguals
+SEMBLANCA_SENSE_TEMES = 0.9   # entrada sense temes (l'Access): títol com a mínim un 90 % semblant, el mateix any i un sol candidat
 
 
 class Discogs:
@@ -327,11 +328,15 @@ class Discogs:
                 break
         return millor
 
-    def cerca_aprox(self, artista, titol, temes):
+    def cerca_aprox(self, artista, titol, temes, any_=''):
         """Per quan el títol és mal escrit (a la carpeta o a l'entrada antiga): busca els discos de l'artista amb un
-        títol molt semblant i només en dona un si també hi coincideixen la majoria de temes (3 o més)."""
+        títol molt semblant i només en dona un si també hi coincideixen la majoria de temes (3 o més).
+        Si l'entrada no té temes (moltes de l'Access), s'accepta un títol molt semblant (90 %) del mateix any, i
+        només si és l'únic disc de l'artista que s'hi assembla tant."""
         meus = [NT(t) for t in (temes or []) if NT(t)]
-        if len(meus) < 3 or not NT(titol):
+        any_ = str(any_ or '')[:4]
+        sense_temes = len(meus) < 3
+        if not NT(titol) or (sense_temes and not any_):
             return None
         art_ok = lambda nom: bool(N(nom)) and (N(artista) in N(nom) or N(nom) in N(artista))
         semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
@@ -348,6 +353,11 @@ class Discogs:
                 if art_ok(art_x) and s >= SEMBLANCA_TITOL and errada and a != b and a not in provats:
                     cands.append((s, x))
             cands.sort(key=lambda c: -c[0])
+            if sense_temes:
+                bons = [(s, x) for s, x in cands if s >= SEMBLANCA_SENSE_TEMES]
+                if len({NT(x['title'].partition(' - ')[2]) for _, x in bons}) != 1:
+                    continue        # cap o més d'un disc s'hi assembla: no es pot saber quin és
+                cands = bons
             for s, x in cands[:3]:
                 provats.add(NT(x['title'].partition(' - ')[2]))
                 if q['type'] == 'master':
@@ -356,6 +366,12 @@ class Discogs:
                 else:
                     rel = self.release(x['id'])
                 if not rel:
+                    continue
+                if sense_temes:
+                    anys = {str(x.get('year') or '')[:4], str(rel.get('any') or '')[:4]}
+                    if any_ in anys:
+                        rel['aprox'] = round(s, 2)
+                        return rel
                     continue
                 seus = [NT(t['titol']) for t in rel['temes'] if NT(t['titol'])]
                 iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
@@ -593,6 +609,22 @@ def lastfm_temes(artista, titol, key):
         out.append({'n': str((x.get('@attr') or {}).get('rank') or ''), 'titol': x.get('name') or '',
                     'durada': f'{s // 60}:{s % 60:02d}' if s else ''})
     return out
+
+def lastfm_top_temes(artista, key, n=200):
+    """Els temes més escoltats d'un artista a Last.fm: [(títol, escoltes)] (per marcar els temes destacats)."""
+    if not key:
+        return []
+    r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
+        {'method': 'artist.gettoptracks', 'artist': artista, 'api_key': key, 'format': 'json', 'limit': n,
+         'autocorrect': 1}), json_=True) or {}
+    out = []
+    for x in (r.get('toptracks') or {}).get('track', []) or []:
+        try:
+            out.append((x.get('name') or '', int(x.get('playcount') or 0)))
+        except (TypeError, ValueError):
+            pass
+    return out
+
 
 # ---------------- Apple Music ----------------
 AP = 'https://music.apple.com'
