@@ -1687,6 +1687,67 @@ def migra_destacats():
     log(f'Temes destacats: {n} discos amb l\'estrella a la seva columna')
 
 
+MAX_DESTACATS = 3          # com els «picks» d'AllMusic: dos o tres temes per disc
+PROP_DESTACAT = 0.4        # un tema és destacat si té com a mínim el 40 % de les escoltes del tema més escoltat del disc
+
+
+def clau_tema(t):
+    """«Tonight, Tonight (Remastered 2012)» -> «tonighttonight»: per comparar títols de temes."""
+    return N(re.sub(r'\s*[\(\[][^\)\]]*[\)\]]|\s+-\s+.*(remaster|version|mix|live|edit).*$', '', str(t or ''), flags=re.I))
+
+
+def destaca_temes(maxim=300, id_=None):
+    """Els discos que no tenen cap tema destacat (★) en reben, com feia AllMusic: els temes del disc que més
+    s'escolten a Last.fm (com a molt 3). Mai es toquen els discos on ja n'hi ha (les teves estrelles de l'Access o
+    les que hagis posat tu). Cada disc es prova un cop (camp «dst»); es torna a provar al cap de 180 dies si no
+    se n'ha trobat cap."""
+    if not LFM:
+        return 0
+    fa180 = (datetime.date.today() - datetime.timedelta(days=180)).isoformat()
+    artistes = llegeix('artistes.json', {})
+    discs = llegeix('discs.json', [])
+    cua = [d for d in discs if (str(d.get('id')) == str(id_) if id_ else True)
+           and len(d.get('temes') or []) >= 2 and artistes.get(str(d.get('artista')))
+           and not any(len(t) > 6 and t[6] for t in d['temes']) and not any(len(t) > 3 and str(t[3]).strip() == '*' for t in d['temes'])
+           and (id_ or not d.get('dst') or (d.get('dst_n') == 0 and d['dst'] < fa180))]
+    if not id_:
+        cua = cua[:maxim]
+    if not cua:
+        return 0
+    estat('Buscant els temes destacats a Last.fm…')
+    top, marcats, desador = {}, 0, Desador()
+    try:
+        for d in cua:
+            nom = nom_cerca(artistes.get(str(d['artista']), ''))
+            if nom not in top:
+                try:
+                    top[nom] = {}
+                    for tit, n in fonts.lastfm_top_temes(nom, LFM):
+                        k = clau_tema(tit)
+                        if k and n > top[nom].get(k, 0):
+                            top[nom][k] = n
+                except Exception as e:
+                    log(f'  Last.fm: error buscant els temes de {nom} ({e!r})')
+                    break
+            abans = json.loads(json.dumps(d))
+            temes = [destacat(t) for t in d['temes']]
+            esc = [(top[nom].get(clau_tema(t[1]), 0), i) for i, t in enumerate(temes)]
+            esc = sorted((x for x in esc if x[0]), reverse=True)
+            tria = [i for n, i in esc[:MAX_DESTACATS] if n >= PROP_DESTACAT * esc[0][0]] if esc else []
+            for i in tria:
+                temes[i][6] = 1
+            if tria:
+                d['temes'] = temes
+                d['auto'] = sorted(set(d.get('auto', [])) | {'destacats'})
+                marcats += 1
+            d['dst'], d['dst_n'] = AVUI, len(tria)
+            desador.afegeix(abans, d)
+    finally:
+        desador.desa()
+    log(f'Temes destacats: {len(cua)} discos mirats a Last.fm, {marcats} amb temes destacats nous')
+    return marcats
+
+
 def unifica_variables():
     """«sin» i «sin bitrate» (bitrate variable) passen a «VBR»; després s'hi afegeix la mitjana: «VBR ~208»."""
     with comu.BLOC:
@@ -1777,6 +1838,11 @@ def main():
                 fets += perfil_lastfm(6000 if a.mode == 'perfil' else 600)
             except Exception as e:
                 log(f'Perfil musical: error {e!r}')
+        if a.mode in ('nit', 'tot', 'disc', 'destacats'):
+            try:
+                destaca_temes(a.n, a.id if a.mode == 'disc' else None)
+            except Exception as e:
+                log(f'Temes destacats: error {e!r}')
         # el so dels discos (mostres de 30 s d'Apple Music): 300 discos per tanda, com a màxim 90 minuts
         if a.mode in ('nit', 'tot', 'so', 'disc'):
             try:

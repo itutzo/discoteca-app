@@ -594,6 +594,22 @@ def lastfm_temes(artista, titol, key):
                     'durada': f'{s // 60}:{s % 60:02d}' if s else ''})
     return out
 
+def lastfm_top_temes(artista, key, n=200):
+    """Els temes més escoltats d'un artista a Last.fm: [(títol, escoltes)] (per marcar els temes destacats)."""
+    if not key:
+        return []
+    r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
+        {'method': 'artist.gettoptracks', 'artist': artista, 'api_key': key, 'format': 'json', 'limit': n,
+         'autocorrect': 1}), json_=True) or {}
+    out = []
+    for x in (r.get('toptracks') or {}).get('track', []) or []:
+        try:
+            out.append((x.get('name') or '', int(x.get('playcount') or 0)))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 # ---------------- Apple Music ----------------
 AP = 'https://music.apple.com'
 
