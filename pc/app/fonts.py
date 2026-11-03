@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Consultes a AllMusic, Discogs, MusicBrainz, Last.fm i Apple Music."""
-import json, re, time, random, urllib.request, urllib.parse, urllib.error, gzip, subprocess, sys
+import json, re, time, difflib, random, urllib.request, urllib.parse, urllib.error, gzip, subprocess, sys
 
 try:
     from bs4 import BeautifulSoup
@@ -248,6 +248,8 @@ def allmusic(artista, titol):
 
 # ---------------- Discogs ----------------
 DAPI = 'https://api.discogs.com'
+SEMBLANCA_TITOL = 0.7    # títol mal escrit: com a mínim un 70 % semblant al de Discogs
+TEMES_IGUALS = 0.6       # ... i com a mínim el 60 % dels temes iguals
 
 
 class Discogs:
@@ -317,6 +319,43 @@ class Discogs:
             if meus and iguals >= max(1, len(meus) // 2):
                 break
         return millor
+
+    def cerca_aprox(self, artista, titol, temes):
+        """Per quan el títol és mal escrit (a la carpeta o a l'entrada antiga): busca els discos de l'artista amb un
+        títol molt semblant i només en dona un si també hi coincideixen la majoria de temes (3 o més)."""
+        meus = [NT(t) for t in (temes or []) if NT(t)]
+        if len(meus) < 3 or not NT(titol):
+            return None
+        art_ok = lambda nom: bool(N(nom)) and (N(artista) in N(nom) or N(nom) in N(artista))
+        semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
+        provats = set()
+        for q in ({'type': 'master', 'artist': artista}, {'type': 'release', 'artist': artista}):
+            r = self.api('/database/search', per_page=100, **q) or {}
+            cands = []
+            for x in (r.get('results') or []):
+                art_x, _, tit_x = (x.get('title') or '').partition(' - ')
+                s = semblant(NT(tit_x), NT(titol))
+                a, b = NT(tit_x), NT(titol)
+                # una errada d'escriptura, no un altre disc amb paraules de més («X» / «X Live», «Hits» / «Hits Vol. 2»)
+                errada = abs(len(a) - len(b)) <= max(2, len(b) // 5)
+                if art_ok(art_x) and s >= SEMBLANCA_TITOL and errada and a != b and a not in provats:
+                    cands.append((s, x))
+            cands.sort(key=lambda c: -c[0])
+            for s, x in cands[:3]:
+                provats.add(NT(x['title'].partition(' - ')[2]))
+                if q['type'] == 'master':
+                    m = self.api(f"/masters/{x['id']}")
+                    rel = self.release(m['main_release']) if m else None
+                else:
+                    rel = self.release(x['id'])
+                if not rel:
+                    continue
+                seus = [NT(t['titol']) for t in rel['temes'] if NT(t['titol'])]
+                iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
+                if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
+                    rel['aprox'] = round(s, 2)
+                    return rel
+        return None
 
     def release(self, rid):
         rel = self.api(f'/releases/{rid}')
