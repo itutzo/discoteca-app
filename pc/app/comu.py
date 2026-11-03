@@ -180,11 +180,22 @@ def NT(s):
 
 
 def marca_reanomena(abans, d):
-    """L'Ignasi ha canviat el títol a mà: la carpeta del NAS i els arxius de dins s'han de dir igual."""
-    if abans and d.get('carpeta') and str(abans.get('titol') or '').strip() != str(d.get('titol') or '').strip():
+    """L'Ignasi ha canviat a mà el títol o l'artista: la carpeta del NAS i els arxius de dins s'han de dir igual."""
+    if abans and d.get('carpeta') and (str(abans.get('titol') or '').strip() != str(d.get('titol') or '').strip()
+                                       or str(abans.get('artista') or '') != str(d.get('artista') or '')):
         d['reanomena_nas'] = True
         return True
     return False
+
+
+def marca_reanomena_artista(discs, id_art):
+    """S'ha corregit el nom d'un artista: totes les seves carpetes del NAS es reanomenen. Torna quantes."""
+    n = 0
+    for d in discs:
+        if str(d.get('artista')) == str(id_art) and d.get('carpeta'):
+            d['reanomena_nas'] = True
+            n += 1
+    return n
 
 
 def aplica_canvis_mobil():
@@ -208,6 +219,8 @@ def aplica_canvis_mobil():
                 continue          # encara s'està sincronitzant: ja ho farem la propera vegada
             t = c.get('tipus')
             if t == 'artista':
+                if str(c['id']) in arts and arts[str(c['id'])] != c['nom']:
+                    marca_reanomena_artista(discs, c['id'])
                 arts[c['id']] = c['nom']
             elif t == 'esborra':
                 for d in discs:
@@ -231,7 +244,7 @@ def aplica_canvis_mobil():
                         d.pop(k, None)
                     else:
                         d[k] = v
-                if 'titol' in (c.get('patch') or {}):
+                if {'titol', 'artista'} & set(c.get('patch') or {}):
                     marca_reanomena(abans, d)
             fets.append(f)
         if fets:

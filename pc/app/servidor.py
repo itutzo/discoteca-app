@@ -88,6 +88,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _reanomena(self):
+        """El títol o l'artista han canviat: es reanomenen ara mateix la carpeta del NAS i els arxius
+        (si el completador ja treballa, ho farà ell en acabar o la propera vegada)."""
+        if not (proces['p'] and proces['p'].poll() is None):
+            proces['p'] = subprocess.Popen(
+                [sys.executable, os.path.join(os.path.dirname(__file__), 'completar.py'), '--mode', 'reanomena'],
+                creationflags=0x08000000 if os.name == 'nt' else 0)
+
     def _body(self):
         n = int(self.headers.get('Content-Length') or 0)
         return self.rfile.read(n) if n else b''
@@ -160,11 +168,8 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         discs.append(rec)
                     desa('discs.json', discs)
-                if reanomena and not (proces['p'] and proces['p'].poll() is None):
-                    # el títol ha canviat: es reanomenen ara mateix la carpeta del NAS i els arxius
-                    proces['p'] = subprocess.Popen(
-                        [sys.executable, os.path.join(os.path.dirname(__file__), 'completar.py'), '--mode', 'reanomena'],
-                        creationflags=0x08000000 if os.name == 'nt' else 0)
+                if reanomena:
+                    self._reanomena()
                 return self._json({'ok': True, 'id': rec.get('id')})
             if p == '/api/esborra':
                 k = str(json.loads(self._body()).get('id'))
@@ -187,9 +192,15 @@ class Handler(BaseHTTPRequestHandler):
                 with BLOC:
                     arts = llegeix('artistes.json', {})
                     if x.get('id') and str(x['id']) in arts:
-                        # corregir el nom d'un artista (s'aplica a tots els seus discos)
+                        # corregir el nom d'un artista (s'aplica a tots els seus discos i a les seves carpetes del NAS)
+                        canvia = arts[str(x['id'])] != nom
                         arts[str(x['id'])] = nom
                         desa('artistes.json', arts)
+                        if canvia:
+                            discs = llegeix('discs.json', [])
+                            if comu.marca_reanomena_artista(discs, x['id']):
+                                desa('discs.json', discs)
+                                self._reanomena()
                         return self._json({'ok': True, 'id': str(x['id'])})
                     for k, v in arts.items():
                         if comu.N(v) == comu.N(nom):
