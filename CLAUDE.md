@@ -8,7 +8,7 @@ Respon sempre en **català**. Quan donis instruccions de l'app d'escriptori de C
 
 | Carpeta | Què és | On viu |
 |---|---|---|
-| `pc/` | App local en Python (només la biblioteca estàndard, més `curl_cffi`, `beautifulsoup4` i `playwright`) | `C:\Users\Usuario\Dropbox\Personal\Discoteca\` al PC de l'Ignasi |
+| `pc/` | App local en Python (només la biblioteca estàndard, més `curl_cffi`, `beautifulsoup4`, `playwright`, `numpy` i `av`) | `C:\Users\Usuario\Dropbox\Personal\Discoteca\` al PC de l'Ignasi |
 | `mobil/` | Versió web per a iPhone i iPad, que llegeix i escriu directament al Dropbox | Publicada a https://itutzo.github.io/discoteca/ (repositori **públic** `itutzo/discoteca`, GitHub Pages) |
 
 En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `Dropbox\Personal\Discoteca\dades\` i les caràtules a `...\caratules\<id>.jpg`.
@@ -21,6 +21,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
   - **AllMusic** sempre amb Playwright i el **Chrome** instal·lat (`channel='chrome'`, finestra fora de la pantalla), perquè bloqueja els altres clients.
   - **Discogs** per l'API amb token, **Last.fm** (`getsimilar`, `getinfo`, `gettoptags` i `album.getinfo` per a les durades) i **Apple Music** (HTML).
   - **MusicBrainz** (API oberta, 1 consulta per segon, User-Agent amb l'adreça del repositori) quan AllMusic no dona el disc: any, gèneres, compositors (relacions de *work*), intèrprets i caràtula de Cover Art Archive. AllMusic bloqueja l'accés automàtic des del 28/10/2026 (403): no s'ha d'intentar esquivar.
+- `so.py`: el so dels discos per als similars. Mostres de 30 s d'Apple Music (iTunes Search API, `search` + `lookup`, 3 temes per disc, 3,1 s entre consultes), descodificades amb PyAV i analitzades amb numpy (37 mesures: MFCC, brillantor, greus/aguts, dinàmica, tempo). Es desa a `dades/so.json` (`{id: {v, n, d, u, ver}}` o `{no: data}`, es torna a provar al cap de 120 dies). numpy i av s'instal·len sols amb pip `--user`. Mode `so` (botó **Eines → Escolta el so dels discos**), i també a `nit`, `tot` i `disc` (300 discos per tanda, màxim 90 minuts). **Mai** s'obren els MP3 del NAS per a això.
 - `comu.py`:
   - Rutes i configuració (`%USERPROFILE%\.discoteca\config.ini`, **fora** de Dropbox, amb els tokens de Discogs i Last.fm).
   - Escriptura atòmica amb reintents, perquè Dropbox bloqueja arxius, i còpies diàries a `dades/copies`.
@@ -38,6 +39,7 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 
 ## Dades (`dades/`)
 - `discs.json`: llista de discos. Camps principals: `id`, `artista` (és l'id que apunta a `artistes.json`), `titol`, `any`, `suport` (`"mp3, cd, lp"`), `carpeta` (nom de la carpeta al NAS), `temes` `[[n, títol, compositor, '', 0, 0]]`, `interprets`, `classificacio`, `notes`, `clasamg`, `genere`, `estil`, `segell`, `catno`, `barcode`, `edicio`, `bitrate`, `caratula`/`cv`, `estat:"pendent"`, `fonts`, `auto`, `proc`, `no_trobat`, `reintenta`, `am_error` (data en què AllMusic no va deixar consultar el disc: es torna a provar), `br`, i `nas_t`/`nas_m` (firma dels temes llegits dels noms dels arxius i data de la carpeta: si l'Ignasi canvia els arxius, els temes es tornen a llegir; si els ha corregit a l'app, la firma ja no coincideix i no es toquen).
+- `so.json`: mesures del so de cada disc (vegeu `so.py`); la pàgina les normalitza (z) i compara amb el cosinus: suma `4·s` als similars i, si dos discos sonen molt diferent (s < 0), l'estil sol no els fa «relació forta».
 - `artistes.json` `{id: nom}` · `recs.json` (recomanacions per artista; `v: 2` porta `urls` per font, i l'enllaç de cada recomanació obre la font de la seva etiqueta) · `lastfm.json` (etiquetes i oients) · `ignorats.json` `{artistes, discos, carpetes}`.
 - `registre.txt` (a partir de 2 MB passa a `registre-anterior.txt`), `migracions.json` (canvis d'un sol cop ja fets), `estat.json`, `duplicats_informe.txt` i `discogs_informe.txt`.
 

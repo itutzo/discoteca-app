@@ -169,6 +169,7 @@ fieldset.sups input{width:auto}
             <button class="btn ghost" type="button" data-run="nas">Busca discos nous al NAS</button>
             <button class="btn ghost" type="button" data-run="duplicats">Busca i ajunta discos duplicats</button>
             <button class="btn ghost" type="button" data-run="perfil">Calcula la meva identitat musical</button>
+            <button class="btn ghost" type="button" data-run="so">Escolta el so dels discos (una tanda)</button>
             <button class="btn ghost local-only" type="button" id="mobilBtn">Obre-la al mòbil o la tauleta</button>
             <button class="btn ghost local-only" type="button" id="aturaBtn">Tanca la Discoteca</button>
             <button class="btn ghost" type="button" id="surtBtn">Surt del compte de Dropbox</button>
@@ -358,6 +359,7 @@ const api = async (path, opts) => {
     return cacheDades;
   }
   if(p === '/api/lastfm') return llegeixJSON('/dades/lastfm.json', {});
+  if(p === '/api/so') return llegeixJSON('/dades/so.json', {});
   if(p === '/api/recs-tots'){
     if(!cacheRecs) cacheRecs = llegeixJSON('/dades/recs.json', {});
     return await cacheRecs;
@@ -497,6 +499,30 @@ function estilLF(d, a){
   const x = vecArt(d.artista), y = vecArt(a);
   return x.n && y.n ? cosinus(x.v, y.v, y.n) : null;          // null: Last.fm encara no en té etiquetes
 }
+// El so dels discos (mostres de 30 s d'Apple Music analitzades al PC: color del so, brillantor, dinàmica, tempo...).
+// Cada mesura es normalitza amb la mitjana i la desviació de tota la col·lecció; la semblança és el cosinus (de -1 a 1).
+let simSo = null; const soArtCache = new Map();
+function preparaSo(S){
+  const ids = Object.keys(S || {}).filter(k => Array.isArray(S[k]?.v) && S[k].v.length);
+  if(ids.length < 30) return;                                  // amb tan pocs discos encara no és fiable
+  const D = S[ids[0]].v.length, m = new Array(D).fill(0), q = new Array(D).fill(0);
+  ids.forEach(k => S[k].v.forEach((x,i) => { m[i] += x; q[i] += x*x; }));
+  const sd = m.map((x,i) => { const mi = x/ids.length; m[i] = mi; return Math.sqrt(Math.max(1e-12, q[i]/ids.length - mi*mi)); });
+  simSo = new Map();
+  ids.forEach(k => { if(S[k].v.length !== D) return; const z = S[k].v.map((x,i) => (x - m[i]) / sd[i]); const n = Math.hypot(...z) || 1; simSo.set(k, z.map(x => x/n)); });
+  soArtCache.clear();
+}
+const dotSo = (a, b) => { let s = 0; for(let i = 0; i < a.length; i++) s += a[i]*b[i]; return s; };
+function soDiscs(d, x){ const a = simSo?.get(String(d.id)), b = simSo?.get(String(x.id)); return a && b ? dotSo(a, b) : null; }
+function soArt(a){
+  if(!simSo) return null; a = String(a);
+  if(soArtCache.has(a)) return soArtCache.get(a);
+  let v = null, n = 0;
+  for(const d of discs){ if(String(d.artista) !== a) continue; const z = simSo.get(String(d.id)); if(!z) continue; v = v ? v.map((x,i) => x + z[i]) : [...z]; n++; }
+  if(v){ const h = Math.hypot(...v) || 1; v = v.map(x => x/h); }
+  soArtCache.set(a, v); return v;
+}
+function soArtistes(a, b){ const x = soArt(a), y = soArt(b); return x && y ? dotSo(x, y) : null; }
 function puntsEstil(d, x, c){
   if(c != null) return 5*c;
   let v = 0;
@@ -514,9 +540,11 @@ function similarDiscs(d, n=5){
     const k = String(x.artista);
     if(!perArt.has(k)) perArt.set(k, [afinitat(d, k), estilLF(d, k)]);
     const [af, c] = perArt.get(k);
-    let v = af + puntsEstil(d, x, c);
+    const s = soDiscs(d, x);                                   // null: encara no s'ha escoltat algun dels dos
+    let v = af + puntsEstil(d, x, c) + (s == null ? 0 : 4*s);
     for(const cc of d._comp) if(x._comp.has(cc)) { v += 1.5; break; }
-    if(af || (c != null && c >= 0.5)) fort.add(x);
+    // relació de debò: les fonts d'internet, o estil i so semblants (si sonen molt diferent, l'estil sol no basta)
+    if(af || (((c != null && c >= 0.5) || (s != null && s >= 0.6)) && !(s != null && s < 0))) fort.add(x);
     if(v >= 1){ v += yearSim(+d.any, +x.any)*1.5 + num(x.classificacio)/10; add(x, v); }
   }
   const out = [], seen = new Set();
@@ -535,8 +563,9 @@ function similarArtists(d, n=5){
     if(a === String(d.artista)) continue;
     let v = afinitat(d, a), fort = v > 0;
     for(const [p] of me.ppl) if(A.ppl.has(p) && (simIdx.byPerson.get(p)||[]).length < 60){ v += 3; fort = true; }
-    const c = estilLF(d, a);
-    if(c != null){ v += 5*c; if(c >= 0.5) fort = true; }
+    const c = estilLF(d, a), s = soArtistes(d.artista, a);
+    if(s != null){ v += 4*s; if(s >= 0.6) fort = true; }
+    if(c != null){ v += 5*c; if(c >= 0.5 && !(s != null && s < 0)) fort = true; }
     else {
       let inter = 0, uni = new Set([...me.sty.keys(), ...A.sty.keys()]).size;
       for(const k of me.sty.keys()) if(A.sty.has(k)) inter++;
@@ -561,8 +590,9 @@ async function milloraSimilars(d){
   try{
     const key = String(d.artista);
     if(!recCache.has(key)) recCache.set(key, api('/api/recs/'+encodeURIComponent(key)).then(x=>x && x.artistes ? x : null).catch(()=>null));
-    const [r, LF] = await Promise.all([recCache.get(key), simLF ? null : dadesLF()]);
+    const [r, LF, S] = await Promise.all([recCache.get(key), simLF ? null : dadesLF(), simSo ? null : dadesSo()]);
     if(LF && !simLF){ simLF = LF; calculaIDF(LF); vecCache.clear(); }
+    if(S && !simSo) preparaSo(S);
     if(r && !simRecsArt.has(key)) simRecsArt.set(key, new Map((r.artistes||[]).map(x=>[tok2(x.nom), (x.fonts||[]).length])));
     const box = $('#similars');
     if(box && current === d && !editing){
@@ -703,6 +733,8 @@ const ignorats = () => igCache || (igCache = api('/api/ignorats').catch(()=>({ar
 let recsOpen = false, totsRecs = null, totsLF = null;
 const recsTots = () => totsRecs || (totsRecs = api('/api/recs-tots').catch(() => ({})));
 const dadesLF = () => totsLF || (totsLF = api('/api/lastfm').catch(() => ({})));
+let totsSo = null;
+const dadesSo = () => totsSo || (totsSo = api('/api/so').catch(() => ({})));
 // etiquetes de Last.fm que no diuen res de l'estil
 const SOROLL = new Set(['seen live','favorites','favourites','favorite','favourite','my favorite','love','awesome','beautiful','amazing','cool','good','great','best','all','spotify','under 2000 listeners','albums i own','music','vinyl','male vocalists','female vocalists','male vocalist','female vocalist','singer','band','bands','usa','american','british','uk','english','canadian','australian','german','swedish','finnish','norwegian','spanish','french','italian','japanese','irish','scottish','polish','dutch','danish','brazilian','spain','espana','germany','sweden','finland','norway','england','australia','canada','california','texas','new york','los angeles','seattle','minnesota','indiana','guitar','guitarist','supergroup','00s','90s','80s','70s','60s','10s','2000s','1990s','1980s','1970s']);
 const netTag = t => { t = String(t||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ').trim(); return SOROLL.has(t) || t.length < 2 ? null : t; };

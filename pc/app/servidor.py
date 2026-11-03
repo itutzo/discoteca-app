@@ -121,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'artistes': llegeix('artistes.json', {}), 'discs': llegeix('discs.json', [])})
         if p == '/api/lastfm':
             return self._json(llegeix('lastfm.json', {}))
+        if p == '/api/so':
+            return self._json(llegeix('so.json', {}))
         if p == '/api/recs-tots':
             return self._json(llegeix('recs.json', {}))
         if p.startswith('/api/recs/'):
