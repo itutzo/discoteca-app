@@ -87,7 +87,8 @@ dl.facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 h3.sec{font:500 12px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:28px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 ol.tracks{list-style:none;margin:0;padding:0}
 ol.tracks li{display:grid;grid-template-columns:2.2em minmax(0,1fr) auto;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line);align-items:baseline}
-ol.tracks .n{font-family:var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+ol.tracks.discs li{grid-template-columns:5.8em minmax(0,1fr) auto}
+ol.tracks .n{font-family:var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 ol.tracks .c{color:var(--muted);font-size:13px;text-align:right}
 .tag{font:500 10px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:2px 5px;margin-left:6px;color:var(--muted)}
 .people{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 20px;font-size:14px}
@@ -681,7 +682,7 @@ function renderSheet(){
         </dl>
       </div>
     </div>
-    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>
