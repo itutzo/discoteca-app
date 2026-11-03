@@ -230,7 +230,7 @@ FORMAT = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(\d{1,3})\s+[-–�
 
 def nom_arxiu(art, tit, base):
     """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»).
-    Torna None si no se n'entén el número de pista (llavors no es toca)."""
+    Torna (número, nom), o None si no se n'entén el número de pista (llavors no es toca)."""
     m = FORMAT.match(base)
     if m and N(m.group(1)) == N(art) and N(m.group(2)) == N(tit):
         num, can = m.group(3), m.group(4)
@@ -243,7 +243,7 @@ def nom_arxiu(art, tit, base):
     can = majuscules(re.sub(r'\s+', ' ', can).strip())
     if not can:
         return None
-    return f'{art} - {tit} - {int(num):02d} - {can}'
+    return int(num), f'{art} - {tit} - {int(num):02d} - {can}'
 
 
 def formata_arxius(d, arrel):
@@ -259,14 +259,14 @@ def formata_arxius(d, arrel):
     for root, _, files in os.walk(ruta):
         musica = [f for f in files if os.path.splitext(f)[1].lower() in EXT]
         nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0]) for f in musica}
-        nums_ = [n.split(' - ')[-2] if n.count(' - ') >= 3 else '' for n in nous.values() if n]
+        nums_ = [x[0] for x in nous.values() if x]
         # dos arxius amb el mateix número (dos CD a la mateixa carpeta): no es toca res d'aquesta carpeta
-        if len(nums_) != len({x for x in nums_}):
+        if len(nums_) != len(set(nums_)):
             continue
-        for f, nou in nous.items():
-            if not nou:
+        for f, x in nous.items():
+            if not x:
                 continue
-            nou += os.path.splitext(f)[1]
+            nou = x[1] + os.path.splitext(f)[1]
             if nou == f or (nou.lower() != f.lower() and os.path.exists(os.path.join(root, nou))):
                 continue
             try:
