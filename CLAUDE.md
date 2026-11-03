@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Discoteca: context per a Claude
 
 Catàleg personal de discos de l'Ignasi (uns 3.000 enregistraments en MP3, CD i vinil). Substitueix una base de dades d'Access antiga, que es conserva com a còpia de seguretat i **no s'ha de tocar**.
@@ -15,7 +19,8 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 
 ### PC (`pc/app`)
 - `servidor.py`: servidor HTTP a `127.0.0.1:8800`, només local. Comprova la capçalera Host (contra el DNS rebinding) i l'Origin i el Sec-Fetch-Site als POST. En arrencar, torna a registrar la tasca programada amb la ruta actual de la carpeta.
-- `completar.py`: completa dades automàticament. Té els modes `nit` (el de la tasca diària de les 14:30), `tot`, `pendents`, `disc`, `discogs`, `nas`, `duplicats` i `perfil`. Cada tanda és de 300 discos com a mínim.
+- `completar.py`: completa dades automàticament. Té els modes `nit` (el de la tasca diària de les 14:30), `tot`, `pendents`, `disc` (amb `--id`), `discogs`, `nas`, `duplicats`, `perfil`, `so` i `reanomena` (només reanomena carpetes i arxius després d'un canvi de títol fet a mà). Cada tanda és de 300 discos com a mínim (`--n`). La pàgina el llança com a procés separat amb `POST /api/completa?mode=…` (un sol procés alhora).
+  - `main()` fa cada pas (canvis del mòbil, català, bitrate, NAS, Discogs, duplicats, noms i format del NAS, títols, discos dobles, tanda, perfil, so) en un `try` propi: si un falla, els altres continuen. Un pas nou s'hi ha d'afegir igual.
   - A cada execució, `tradueix_catala()` passa al català la `qualitat` i les `notes` que encara són en castellà (només valors exactes de la llista; el primer cop deixa una còpia a `dades/copies/catala-discs-abans.json`).
 - `fonts.py`:
   - **AllMusic** sempre amb Playwright i el **Chrome** instal·lat (`channel='chrome'`, finestra fora de la pantalla), perquè bloqueja els altres clients.
@@ -36,6 +41,24 @@ En aquest repositori **no** hi ha dades, caràtules ni claus. Les dades són a `
 - Té una CSP que limita les connexions a Dropbox, MusicBrainz, Wikidata i la Wikipedia. Si s'afegeix una font nova, cal afegir-la al `connect-src`.
 - Les caselles del formulari no fan servir l'autoemplenat del navegador: proposen suggeriments en català (`SUGG`) i, per a gènere i estil, els valors del catàleg.
 - **La interfície està duplicada**: qualsevol canvi a `pc/app/web/index.html` s'ha d'aplicar també a `mobil/index.html`, i al revés.
+
+## Ordres
+
+No hi ha proves automàtiques, linter ni compilació. Per comprovar el Python abans de pujar-lo:
+
+```bash
+python3 -m py_compile pc/app/*.py
+```
+
+Per executar-lo (pensat per al Windows de l'Ignasi; aquí, sense dades, NAS ni claus, gairebé res fa feina real):
+
+```bash
+python pc/app/completar.py --mode nit            # el mateix que fa "Completar ara.bat"
+python pc/app/completar.py --mode disc --id <id>  # un sol disc
+python pc/app/servidor.py                         # obre http://localhost:8800/
+```
+
+`comu.py` calcula l'arrel de les dades com la carpeta pare d'`app/` (`ARREL`) i, només d'importar-lo, crea `dades/`, `caratules/` i `dades/copies/` al costat de `pc/app` (estan al `.gitignore`), i `~/.discoteca/config.ini` amb la plantilla buida. Els `.bat` de `pc/` són les dreceres de l'Ignasi per a aquestes mateixes ordres.
 
 ## Dades (`dades/`)
 - `discs.json`: llista de discos. Camps principals: `id`, `artista` (és l'id que apunta a `artistes.json`), `titol`, `any`, `suport` (`"mp3, cd, lp"`), `carpeta` (nom de la carpeta al NAS), `temes` `[[n, títol, compositor, '', 0, 0]]`, `interprets`, `classificacio`, `notes`, `clasamg`, `genere`, `estil`, `segell`, `catno`, `barcode`, `edicio`, `bitrate`, `caratula`/`cv`, `estat:"pendent"`, `fonts`, `auto`, `proc`, `no_trobat`, `reintenta`, `am_error` (data en què AllMusic no va deixar consultar el disc: es torna a provar), `br`, i `nas_t`/`nas_m` (firma dels temes llegits dels noms dels arxius i data de la carpeta: si l'Ignasi canvia els arxius, els temes es tornen a llegir; si els ha corregit a l'app, la firma ja no coincideix i no es toquen).
