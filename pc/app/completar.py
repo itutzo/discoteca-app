@@ -203,13 +203,27 @@ def reanomena_pendents():
             desa('discs.json', discs)
 
 
+def corregeix_artista(d, nou, vell, artistes):
+    """El disc és d'un artista relacionat (el cantant en solitari, o el grup): la fitxa passa a l'artista bo.
+    L'anterior es guarda a «artista_abans» i a dades/titols_corregits.txt. La carpeta del NAS no es toca."""
+    d.setdefault('artista_abans', vell)
+    d['artista'] = id_artista(nou, artistes)
+    log(f'  Artista: «{vell} - {d.get("titol", "")}» és de «{nou}» segons Discogs')
+    try:
+        with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
+            f.write(f"{AVUI}\tartista\t{vell}\t{nou}\t{d.get('titol', '')}\n")
+    except OSError:
+        pass
+    return nou
+
+
 def revisa_titols(n=100):
     """Entrades antigues que Discogs no ha trobat mai: es tornen a buscar (també amb el títol mal escrit),
     unes quantes cada nit. Si es troben, el disc es torna a completar en aquesta mateixa tanda."""
     discs = llegeix('discs.json', [])
     artistes = llegeix('artistes.json', {})
     cua = [d for d in discs if 'Discogs' not in (d.get('fonts') or {}) and not d.get('tit_rev')
-           and len(d.get('temes') or []) >= 3 and artistes.get(str(d.get('artista'))) and d.get('titol')][:n]
+           and artistes.get(str(d.get('artista'))) and d.get('titol')][:n]
     if not cua:
         return
     estat('Revisant títols a Discogs…')
@@ -218,9 +232,10 @@ def revisa_titols(n=100):
         for d in cua:
             abans = json.loads(json.dumps(d))
             nom_art = artistes.get(str(d['artista']), '')
-            temes = [t[1] for t in d['temes'] if len(t) > 1]
+            temes = [t[1] for t in d.get('temes') or [] if len(t) > 1]
             try:
-                dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes)
+                dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes) \
+                    or DG.cerca_relacionat(nom_art, d['titol'], d.get('any', ''))
             except Exception as e:
                 log(f"  Discogs: error {e!r}")
                 break
@@ -228,6 +243,10 @@ def revisa_titols(n=100):
             if dg:
                 trobats += 1
                 d['reintenta'] = True
+                if dg.get('relacionat'):
+                    nom_art = corregeix_artista(d, dg['artista'], nom_art, artistes)
+                    d['auto'] = sorted(set(d.get('auto', [])) | {'artista'})
+                    corregits += 1
                 if dg.get('aprox'):
                     corregeix_titol(d, dg['titol'], nom_art)
                     d['auto'] = sorted(set(d.get('auto', [])) | {'titol'})
@@ -235,7 +254,7 @@ def revisa_titols(n=100):
             desador.afegeix(abans, d)
     finally:
         desador.desa()
-    log(f'Títols: {len(cua)} discos antics buscats a Discogs, {trobats} trobats, {corregits} títols corregits')
+    log(f'Títols: {len(cua)} discos antics buscats a Discogs, {trobats} trobats, {corregits} títols o artistes corregits')
 
 
 # ------------------------------------------------------------------ completar un disc
@@ -259,9 +278,14 @@ def completa(d, artistes, estils_meus):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
             temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1]
-            dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d)
+            dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d) \
+                or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
         log(f'  Discogs: error {e!r}')
+    if dg and dg.get('relacionat'):
+        nom_art = corregeix_artista(d, dg['artista'], nom_art, artistes)
+        auto.add('artista')
+        canvis.append('artista')
     if dg and dg.get('aprox'):
         corregeix_titol(d, dg['titol'], nom_art)
         auto.add('titol')
