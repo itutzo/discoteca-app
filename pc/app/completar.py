@@ -224,6 +224,94 @@ def reanomena_pendents():
             desa('discs.json', discs)
 
 
+# format dels arxius: «Artista - Títol del disc - 03 - Cançó.mp3», cada paraula amb majúscula
+FORMAT = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$')
+
+
+def nom_arxiu(art, tit, base):
+    """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»).
+    Torna None si no se n'entén el número de pista (llavors no es toca)."""
+    m = FORMAT.match(base)
+    if m and N(m.group(1)) == N(art) and N(m.group(2)) == N(tit):
+        num, can = m.group(3), m.group(4)
+    else:
+        if re.search(r'(?:^|[\s-])(?:CD|Disc)\s*\d', base, re.I):
+            return None     # discos dobles amb el CD al nom: no es toquen
+        num, can = num_titol(base)
+        if not num or re.match(r'^\d{1,3}\s', can):
+            return None     # «1-01 Cançó»: no és clar quin és el número de pista
+    can = majuscules(re.sub(r'\s+', ' ', can).strip())
+    if not can:
+        return None
+    return f'{art} - {tit} - {int(num):02d} - {can}'
+
+
+def formata_arxius(d, arrel):
+    """Posa el format «Artista - Títol - 01 - Cançó» als arxius de la carpeta del disc. L'artista i el títol
+    són els de la carpeta. No obre ni descarrega res: només canvia el nom. Torna quants n'ha canviat."""
+    c = d.get('carpeta')
+    m = CARPETA.match(c or '')
+    ruta = os.path.join(arrel, c or '')
+    if not m or not os.path.isdir(ruta):
+        return 0
+    art, tit = m.group(1).strip(), m.group(3).strip()
+    canviats = errors = 0
+    for root, _, files in os.walk(ruta):
+        musica = [f for f in files if os.path.splitext(f)[1].lower() in EXT]
+        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0]) for f in musica}
+        nums_ = [n.split(' - ')[-2] if n.count(' - ') >= 3 else '' for n in nous.values() if n]
+        # dos arxius amb el mateix número (dos CD a la mateixa carpeta): no es toca res d'aquesta carpeta
+        if len(nums_) != len({x for x in nums_}):
+            continue
+        for f, nou in nous.items():
+            if not nou:
+                continue
+            nou += os.path.splitext(f)[1]
+            if nou == f or (nou.lower() != f.lower() and os.path.exists(os.path.join(root, nou))):
+                continue
+            try:
+                os.rename(os.path.join(root, f), os.path.join(root, nou))
+                canviats += 1
+            except OSError as e:
+                errors += 1
+                log(f'  NAS: ara no puc reanomenar «{f}» ({e}); s\'hi tornarà a provar')
+    if canviats:
+        log(f'  NAS: {canviats} arxius de «{c}» amb el format «Artista - Disc - 01 - Cançó»')
+    return -1 if errors else canviats
+
+
+def formata_tots():
+    """Cada vegada: els arxius de les carpetes noves o canviades passen al format «Artista - Disc - 01 - Cançó».
+    Si els temes de la fitxa són els que es van treure dels noms dels arxius, es tornen a llegir."""
+    arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
+    if not os.path.isdir(arrel):
+        return
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
+        canvi = total = 0
+        for d in discs:
+            c = d.get('carpeta')
+            if c not in mtimes or d.get('fmt_m') == mtimes[c] or not CARPETA.match(c):
+                continue
+            n = formata_arxius(d, arrel)
+            ruta = os.path.join(arrel, c)
+            mt = os.stat(ruta).st_mtime
+            if n >= 0:
+                d['fmt_m'] = mt         # si un arxiu no s'ha pogut canviar, es torna a provar la propera vegada
+            if n > 0:
+                total += n
+                if 'temes' in d.get('auto', []) and d.get('nas_t') == firma_temes(d.get('temes', [])):
+                    relleeix_temes(d, ruta, mt)
+                elif d.get('nas_m'):
+                    d['nas_m'] = mt
+            canvi += 1
+        if canvi:
+            desa('discs.json', discs)
+    if total:
+        log(f'NAS: {total} arxius amb el format «Artista - Disc - 01 - Cançó»')
+
+
 def corregeix_artista(d, nou, vell, artistes):
     """El disc és d'un artista relacionat (el cantant en solitari, o el grup): la fitxa passa a l'artista bo.
     L'anterior es guarda a «artista_abans» i a dades/titols_corregits.txt. La carpeta del NAS no es toca."""
@@ -1229,6 +1317,14 @@ def elimina_duplicats():
     return len(fora)
 
 
+def mateixos_temes(vells, nous):
+    """Carpeta esborrada i creada de nou amb un altre nom («Hookah Brown» -> «Hookah Brown - 2013 - ...»):
+    és el mateix disc si gairebé tots els temes de la fitxa antiga hi són."""
+    v = {N(t[1]) for t in vells or [] if len(t) > 1 and N(t[1])}
+    n = {N(t[1]) for t in nous or [] if len(t) > 1 and N(t[1])}
+    return len(v) >= 3 and len(v & n) >= 0.8 * len(v)
+
+
 def llegeix_nas():
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     if not os.path.isdir(arrel):
@@ -1257,7 +1353,9 @@ def llegeix_nas():
         art, any_, tit = (m.group(1).strip(), m.group(2), m.group(3).strip()) if m else (e.name, '', e.name)
         sup = sorted({EXT[os.path.splitext(f)[1].lower()] for _, f in arxius})
         # carpeta reanomenada? el disc antic passa a apuntar a la nova i agafa els noms corregits
-        vell = next((x for x in orfes if mateix_disc(artistes.get(str(x['artista']), ''), x.get('titol'), art, tit)), None)
+        vell = next((x for x in orfes if mateix_disc(artistes.get(str(x['artista']), ''), x.get('titol'), art, tit)), None) \
+            or next((x for x in orfes if N(artistes.get(str(x['artista']), '')) == N(art)
+                     and mateixos_temes(x.get('temes'), temes_de_noms(arxius))), None)
         if vell:
             orfes.remove(vell)
             antic = f"{artistes.get(str(vell['artista']), '')} - {vell.get('titol', '')}"
@@ -1413,6 +1511,7 @@ def main():
         # l'Ignasi acaba de canviar un títol a mà: només es reanomenen la carpeta i els arxius
         try:
             reanomena_pendents()
+            formata_tots()
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
         return
@@ -1437,6 +1536,10 @@ def main():
             reanomena_pendents()
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
+        try:
+            formata_tots()
+        except Exception as e:
+            log(f'NAS: error posant el format als arxius {e!r}')
         if a.mode == 'nit':
             try:
                 revisa_titols(int(CFG.get('titols_per_nit', 100) or 100))
