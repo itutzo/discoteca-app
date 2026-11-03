@@ -507,7 +507,8 @@ def musicbrainz(artista, titol):
         rel = _mb(f"/release/{rels[0]['id']}",
                   inc='recordings+artist-credits+artist-rels+recording-level-rels+work-rels+work-level-rels') or {}
         out['credits'] = [_mb_credit(x) for x in rel.get('relations') or [] if x.get('artist') and x.get('type') in MB_MUSICS]
-        for med in rel.get('media') or []:
+        media = rel.get('media') or []
+        for med in media:
             for t in med.get('tracks') or []:
                 rec = t.get('recording') or {}
                 comp = []
@@ -519,6 +520,7 @@ def musicbrainz(artista, titol):
                             comp.append(w['artist']['name'])
                 ms = t.get('length') or rec.get('length') or 0
                 out['temes'].append({'n': t.get('number') or t.get('position') or '', 'titol': t.get('title') or rec.get('title') or '',
+                                     'disc': med.get('position') if len(media) > 1 else None,
                                      'compositors': list(dict.fromkeys(comp)),
                                      'durada': f'{ms // 60000}:{ms // 1000 % 60:02d}' if ms else ''})
     return out
