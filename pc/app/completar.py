@@ -1422,6 +1422,77 @@ def mateixos_temes(vells, nous):
     return len(v) >= 3 and len(v & n) >= 0.8 * len(v)
 
 
+MARCA_TITOL = re.compile(r'[\s\-–—(\[]*\b(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\s*[)\]]?\s*$', re.I)
+
+
+def disc_del_titol(t):
+    """«Mellon Collie and the Infinite Sadness - CD2» -> («Mellon Collie and the Infinite Sadness», 2); sense marca, (t, 0)."""
+    m = MARCA_TITOL.search(str(t or ''))
+    return (str(t)[:m.start()].strip(), int(m.group(1))) if m else (str(t or '').strip(), 0)
+
+
+def ajunta_discs_partits(discs, orfes, artistes, arrel):
+    """Disc doble que tenia una fitxa per CD («... - CD1» i «... - CD2»): si has ajuntat els arxius en una sola
+    carpeta, la fitxa del CD que s'ha quedat sense carpeta s'ajunta amb la que l'ha adoptat. Els temes de cada CD
+    queden marcats amb el seu disc i res del que has escrit es perd (omple només els camps buits).
+    Torna les fitxes que s'han ajuntat (per treure-les de la llista)."""
+    fora = []
+    for x in list(orfes):
+        base, k = disc_del_titol(x.get('titol'))
+        if not k:
+            continue
+        art = N(artistes.get(str(x.get('artista')), ''))
+        temes_x = [list(t) + [''] * (6 - len(t)) for t in x.get('temes') or []]
+        for w in discs:
+            if w is x or id(w) in map(id, fora) or not w.get('carpeta') or w in orfes \
+                    or N(artistes.get(str(w.get('artista')), '')) != art:
+                continue
+            base_w, k_w = disc_del_titol(w.get('titol'))
+            if net_titol(base_w) != net_titol(base) or k_w:
+                continue
+            ruta = os.path.join(arrel, w['carpeta'])
+            if not os.path.isdir(ruta) or not mateixos_temes(temes_x, temes_de_noms(arxius_de(ruta))):
+                continue
+            # la fitxa que es queda: els seus temes són d'un altre CD (el que tenia abans, o l'1)
+            temes_w = [list(t) + [''] * (6 - len(t)) for t in w.get('temes') or []]
+            if temes_x and not any(str(t[3]).strip() for t in temes_x):
+                for t in temes_x:
+                    t[3] = f'CD{k}'
+            if temes_w and not any(str(t[3]).strip() for t in temes_w):
+                kw = 1 if k != 1 else 2
+                for t in temes_w:
+                    t[3] = f'CD{kw}'
+            vistos = {(str(t[3]), str(t[0]).strip(), N(t[1])) for t in temes_w}
+            temes_w += [t for t in temes_x if (str(t[3]), str(t[0]).strip(), N(t[1])) not in vistos]
+            num = lambda t: int(re.sub(r'\D', '', str(t[0])) or 10 ** 4)
+            temes_w.sort(key=lambda t: (int(re.sub(r'\D', '', str(t[3])) or 0), num(t)))
+            firma_abans = firma_temes(w.get('temes') or [])
+            w['temes'] = temes_w
+            if w.get('nas_t') == firma_abans:
+                w['nas_t'] = firma_temes(temes_w)
+            for c in CAMPS_MEUS:
+                if c != 'temes' and x.get(c) and not w.get(c):
+                    w[c] = x[c]
+            for i in x.get('interprets') or []:
+                if i not in (w.get('interprets') or []):
+                    w.setdefault('interprets', []).append(i)
+            for sp in suports(x):
+                afegeix_suport(w, sp)
+            w.pop('fmt_m', None)        # els arxius es tornaran a anomenar amb «Disc 1» / «Disc 2»
+            fora.append(x)
+            orfes.remove(x)
+            nom = artistes.get(str(x.get('artista')), '')
+            log(f"NAS: «{nom} - {x.get('titol', '')}» s'ajunta amb «{nom} - {w.get('titol', '')}» (els CD són a la mateixa carpeta)")
+            try:
+                with open(os.path.join(comu.DADES, 'duplicats_informe.txt'), 'a', encoding='utf-8') as fh:
+                    fh.write(f"\n{datetime.datetime.now():%Y-%m-%d %H:%M}\n«{nom} - {x.get('titol', '')}» + «{nom} - {w.get('titol', '')}»"
+                             f"  →  queda «{nom} - {w.get('titol', '')}» (disc doble en una sola carpeta)\n")
+            except OSError:
+                pass
+            break
+    return fora
+
+
 def llegeix_nas():
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     if not os.path.isdir(arrel):
@@ -1488,6 +1559,14 @@ def llegeix_nas():
         discs.append(d)
         per_art.setdefault(N(art), []).append(d)
         nous += 1
+    # disc doble amb una fitxa per CD i els arxius ajuntats en una sola carpeta: una sola fitxa
+    if orfes:
+        try:
+            fora = {id(x) for x in ajunta_discs_partits(discs, orfes, artistes, arrel)}
+            if fora:
+                discs[:] = [x for x in discs if id(x) not in fora]
+        except Exception as e:
+            log(f'NAS: error ajuntant discos dobles {e!r}')
     # discos amb els temes trets dels noms dels arxius: si has canviat els arxius, es tornen a llegir
     mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
     relleguts = []
