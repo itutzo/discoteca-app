@@ -173,9 +173,18 @@ NUMS = {'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '
 def NT(s):
     """Com N() però «Fifteen» = «15» i «IV» = «4», per comparar títols."""
     s = unicodedata.normalize('NFD', str(s or '')).encode('ascii', 'ignore').decode().lower()
+    s = s.replace('&', ' and ')                 # «Hips & Makers» = «Hips And Makers»
     s = re.sub(r'[\(\[][^\)\]]*(remaster|deluxe|edition|expanded|anniversary|bonus)[^\)\]]*[\)\]]', '', s)
     s = ' '.join(NUMS.get(w, w) for w in re.findall(r'[a-z0-9]+', s))
     return N(s)
+
+
+def marca_reanomena(abans, d):
+    """L'Ignasi ha canviat el títol a mà: la carpeta del NAS i els arxius de dins s'han de dir igual."""
+    if abans and d.get('carpeta') and str(abans.get('titol') or '').strip() != str(d.get('titol') or '').strip():
+        d['reanomena_nas'] = True
+        return True
+    return False
 
 
 def aplica_canvis_mobil():
@@ -216,11 +225,14 @@ def aplica_canvis_mobil():
                 if d is None:
                     d = {'id': c['id']}
                     discs.append(d)
+                abans = dict(d)
                 for k, v in (c.get('patch') or {}).items():
                     if v is None:
                         d.pop(k, None)
                     else:
                         d[k] = v
+                if 'titol' in (c.get('patch') or {}):
+                    marca_reanomena(abans, d)
             fets.append(f)
         if fets:
             desa('artistes.json', arts)

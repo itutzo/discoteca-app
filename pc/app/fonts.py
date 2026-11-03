@@ -282,10 +282,17 @@ class Discogs:
         any_ = str(any_ or '')[:4]
         meus = {NT(t) for t in (temes or []) if NT(t)}
         candidats, vist = [], set()
-        for q in ({'type': 'master', 'artist': artista, 'release_title': titol},
-                  {'type': 'release', 'artist': artista, 'release_title': titol},
-                  {'type': 'master', 'q': f'{artista} {titol}'},
-                  {'type': 'release', 'q': f'{artista} {titol}'}):
+        # «Hips & Makers» a la carpeta i «Hips And Makers» a Discogs (o al revés): es busquen totes dues formes
+        titols = [titol]
+        if '&' in titol:
+            titols.append(re.sub(r'\s*&\s*', ' And ', titol))
+        elif re.search(r'\band\b', titol, re.I):
+            titols.append(re.sub(r'\s+and\s+', ' & ', titol, flags=re.I))
+        consultes = [q for t in titols for q in (
+            {'type': 'master', 'artist': artista, 'release_title': t},
+            {'type': 'release', 'artist': artista, 'release_title': t})]
+        consultes += [{'type': tp, 'q': f'{artista} {t}'} for t in titols for tp in ('master', 'release')]
+        for q in consultes:
             r = self.api('/database/search', per_page=50, **q) or {}
             for x in (r.get('results') or []):
                 # el títol de la cerca és «Artista - Títol»

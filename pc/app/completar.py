@@ -131,25 +131,34 @@ def majuscules(t):
 def reanomena_carpeta(d, titol_vell=None):
     """«Artista - Any - Títol mal escrit» -> «Artista - Any - Títol Bo», i a dins els arxius
     «Artista - Títol mal escrit - 03 - Cançó.mp3» -> «Artista - Títol Bo - 03 - Cançó.mp3».
-    Només si la carpeta té aquest format i el seu títol és el que estava mal escrit. Si Windows no deixa
-    (un arxiu obert, el NAS no hi és), es torna a provar la nit següent."""
-    vell = titol_vell or d.get('titol_abans') or ''
+    Només si la carpeta té aquest format i el seu títol és el que estava mal escrit, o bé si l'Ignasi ha canviat
+    el títol a mà («reanomena_nas»). Si Windows no deixa (un arxiu obert, el NAS no hi és), es torna a provar
+    la nit següent."""
     c = d.get('carpeta')
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     m = CARPETA.match(c or '')
     if not m or not os.path.isdir(os.path.join(arrel, c)):
-        d.pop('carpeta_nova', None)
-        d.pop('arxius_pendents', None)
+        for k in ('carpeta_nova', 'arxius_pendents', 'reanomena_nas'):
+            d.pop(k, None)
         return
+    a_ma = d.get('reanomena_nas')
+    if a_ma:
+        # el títol vell és el que porta ara la carpeta (o el que portava, si ja es va reanomenar)
+        vell = a_ma if isinstance(a_ma, str) else m.group(3)
+        d['reanomena_nas'] = vell
+    else:
+        vell = titol_vell or d.get('titol_abans') or ''
     nou_t = majuscules(nom_carpeta(d['titol']))
     nou = f'{m.group(1).strip()} - {m.group(2)} - {nou_t}'
     if nou != c:
-        if N(m.group(3)) != N(vell):
+        if not a_ma and N(m.group(3)) != N(vell):
             d.pop('carpeta_nova', None)
             return          # el nom de la carpeta no és el mal escrit: no es toca
-        if os.path.exists(os.path.join(arrel, nou)):
+        # Windows no distingeix majúscules: «Hips and Makers» -> «Hips And Makers» és la mateixa carpeta
+        if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
             log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
-            d.pop('carpeta_nova', None)
+            for k in ('carpeta_nova', 'reanomena_nas'):
+                d.pop(k, None)
             return
         try:
             os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
@@ -164,6 +173,7 @@ def reanomena_carpeta(d, titol_vell=None):
         d['arxius_pendents'] = True
     else:
         d.pop('arxius_pendents', None)
+        d.pop('reanomena_nas', None)
 
 
 def reanomena_arxius(ruta, vell, nou_t):
@@ -179,7 +189,7 @@ def reanomena_arxius(ruta, vell, nou_t):
             if not m or N(m.group(2)) != N(vell) or ext.lower() not in EXT:
                 continue
             nou = f'{m.group(1).strip()} - {nou_t} - {m.group(3).strip()}{ext}'
-            if nou == f or os.path.exists(os.path.join(root, nou)):
+            if nou == f or (nou.lower() != f.lower() and os.path.exists(os.path.join(root, nou))):
                 continue
             try:
                 os.rename(os.path.join(root, f), os.path.join(root, nou))
@@ -196,7 +206,7 @@ def reanomena_pendents():
     """Carpetes i arxius que no es van poder reanomenar (un arxiu obert, el NAS no hi era): un altre intent."""
     with comu.BLOC:
         discs = llegeix('discs.json', [])
-        pend = [d for d in discs if d.get('carpeta_nova') or d.get('arxius_pendents')]
+        pend = [d for d in discs if d.get('carpeta_nova') or d.get('arxius_pendents') or d.get('reanomena_nas')]
         for d in pend:
             reanomena_carpeta(d)
         if pend:
@@ -1388,6 +1398,13 @@ def main():
         comu.aplica_canvis_mobil()
     except Exception as e:
         log(f'Error incorporant canvis del mòbil: {e!r}')
+    if a.mode == 'reanomena':
+        # l'Ignasi acaba de canviar un títol a mà: només es reanomenen la carpeta i els arxius
+        try:
+            reanomena_pendents()
+        except Exception as e:
+            log(f'NAS: error reanomenant carpetes {e!r}')
+        return
     try:
         tradueix_catala()
     except Exception as e:
