@@ -572,6 +572,7 @@ function renderSheet(){
     ${d.revisar?'<div class="notice">Completat automàticament: revisa-ho quan puguis. Si tot és correcte, edita i desa per treure aquest avís.</div>':''}
     ${d.estat==='pendent'?'<div class="notice">Pendent de completar: el procés automàtic hi afegirà les dades que falten.</div>':''}
     ${d.auto?.length?`<div class="notice">Dades omplertes automàticament, per revisar: ${esc(d.auto.map(k=>LABELS[k]||k).join(', '))}.</div>`:''}
+    ${d.titol_abans&&d.titol_abans!==d.titol?`<div class="notice">Títol corregit automàticament (era «${esc(d.titol_abans)}»): Discogs té aquest disc amb els mateixos temes i un títol gairebé igual.</div>`:''}
     <div class="hero">${sleeveHTML(d,true)}
       <div style="min-width:0">
         <h2 id="sheetTitle">${esc(d.titol||'(sense títol)')}</h2>

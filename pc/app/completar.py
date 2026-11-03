@@ -94,6 +94,150 @@ def sim(a, b):
     return SequenceMatcher(None, N(a), N(b)).ratio()
 
 
+# ------------------------------------------------------------------ títols mal escrits
+CARPETA = re.compile(r'^(.+?)\s*[-–—]\s*(\d{4})\s*[-–—]\s*(.+)$')
+
+
+def nom_carpeta(t):
+    """Treu els caràcters que Windows no admet als noms de carpeta."""
+    t = re.sub(r'\s*[:/\\|]\s*', ' - ', str(t))
+    t = re.sub(r'[<>"?*]', '', t)
+    return re.sub(r'\s+', ' ', t).strip().rstrip('. ')
+
+
+def corregeix_titol(d, nou, nom_art):
+    """El títol era mal escrit (els temes i un títol molt semblant coincideixen amb Discogs): es corregeix
+    a la fitxa i a la carpeta del NAS. El títol antic es guarda a «titol_abans» i a dades/titols_corregits.txt."""
+    vell = d.get('titol', '')
+    if not nou or N(nou) == N(vell):
+        return
+    nou = majuscules(nou)
+    d.setdefault('titol_abans', vell)
+    d['titol'] = nou
+    log(f'  Títol mal escrit: «{nom_art} - {vell}» ara és «{nou}»')
+    reanomena_carpeta(d, vell)
+    try:
+        with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
+            f.write(f"{AVUI}\t{nom_art}\t{vell}\t{nou}\t{d.get('carpeta', '')}\n")
+    except OSError:
+        pass
+
+
+def majuscules(t):
+    """Cada paraula comença amb majúscula, com els noms de les carpetes i dels arxius («Live At The BBC»)."""
+    return ' '.join(w[:1].upper() + w[1:] for w in str(t).split(' '))
+
+
+def reanomena_carpeta(d, titol_vell=None):
+    """«Artista - Any - Títol mal escrit» -> «Artista - Any - Títol Bo», i a dins els arxius
+    «Artista - Títol mal escrit - 03 - Cançó.mp3» -> «Artista - Títol Bo - 03 - Cançó.mp3».
+    Només si la carpeta té aquest format i el seu títol és el que estava mal escrit. Si Windows no deixa
+    (un arxiu obert, el NAS no hi és), es torna a provar la nit següent."""
+    vell = titol_vell or d.get('titol_abans') or ''
+    c = d.get('carpeta')
+    arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
+    m = CARPETA.match(c or '')
+    if not m or not os.path.isdir(os.path.join(arrel, c)):
+        d.pop('carpeta_nova', None)
+        d.pop('arxius_pendents', None)
+        return
+    nou_t = majuscules(nom_carpeta(d['titol']))
+    nou = f'{m.group(1).strip()} - {m.group(2)} - {nou_t}'
+    if nou != c:
+        if N(m.group(3)) != N(vell):
+            d.pop('carpeta_nova', None)
+            return          # el nom de la carpeta no és el mal escrit: no es toca
+        if os.path.exists(os.path.join(arrel, nou)):
+            log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+            d.pop('carpeta_nova', None)
+            return
+        try:
+            os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+        except OSError as e:
+            d['carpeta_nova'] = nou
+            log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+            return
+        d['carpeta'] = nou
+        log(f'  NAS: carpeta «{c}» reanomenada a «{nou}»')
+    d.pop('carpeta_nova', None)
+    if reanomena_arxius(os.path.join(arrel, nou), vell, nou_t):
+        d['arxius_pendents'] = True
+    else:
+        d.pop('arxius_pendents', None)
+
+
+def reanomena_arxius(ruta, vell, nou_t):
+    """Canvia només la part del títol del disc als noms dels arxius («Artista - Títol - 03 - Cançó.mp3»).
+    No obre ni descarrega res: només canvia el nom. Torna quants no s'han pogut canviar."""
+    if not N(vell):
+        return 0
+    canviats, errors = 0, 0
+    for root, _, files in os.walk(ruta):
+        for f in files:
+            base, ext = os.path.splitext(f)
+            m = re.match(r'^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*(\d{1,3}\s*[-–—]\s*.+)$', base)
+            if not m or N(m.group(2)) != N(vell) or ext.lower() not in EXT:
+                continue
+            nou = f'{m.group(1).strip()} - {nou_t} - {m.group(3).strip()}{ext}'
+            if nou == f or os.path.exists(os.path.join(root, nou)):
+                continue
+            try:
+                os.rename(os.path.join(root, f), os.path.join(root, nou))
+                canviats += 1
+            except OSError as e:
+                errors += 1
+                log(f'  NAS: ara no puc reanomenar «{f}» ({e}); s\'hi tornarà a provar')
+    if canviats:
+        log(f'  NAS: {canviats} arxius reanomenats a «{os.path.basename(ruta)}»')
+    return errors
+
+
+def reanomena_pendents():
+    """Carpetes i arxius que no es van poder reanomenar (un arxiu obert, el NAS no hi era): un altre intent."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        pend = [d for d in discs if d.get('carpeta_nova') or d.get('arxius_pendents')]
+        for d in pend:
+            reanomena_carpeta(d)
+        if pend:
+            desa('discs.json', discs)
+
+
+def revisa_titols(n=100):
+    """Entrades antigues que Discogs no ha trobat mai: es tornen a buscar (també amb el títol mal escrit),
+    unes quantes cada nit. Si es troben, el disc es torna a completar en aquesta mateixa tanda."""
+    discs = llegeix('discs.json', [])
+    artistes = llegeix('artistes.json', {})
+    cua = [d for d in discs if 'Discogs' not in (d.get('fonts') or {}) and not d.get('tit_rev')
+           and len(d.get('temes') or []) >= 3 and artistes.get(str(d.get('artista'))) and d.get('titol')][:n]
+    if not cua:
+        return
+    estat('Revisant títols a Discogs…')
+    desador, trobats, corregits = Desador(), 0, 0
+    try:
+        for d in cua:
+            abans = json.loads(json.dumps(d))
+            nom_art = artistes.get(str(d['artista']), '')
+            temes = [t[1] for t in d['temes'] if len(t) > 1]
+            try:
+                dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes)
+            except Exception as e:
+                log(f"  Discogs: error {e!r}")
+                break
+            d['tit_rev'] = AVUI
+            if dg:
+                trobats += 1
+                d['reintenta'] = True
+                if dg.get('aprox'):
+                    corregeix_titol(d, dg['titol'], nom_art)
+                    d['auto'] = sorted(set(d.get('auto', [])) | {'titol'})
+                    corregits += 1
+            desador.afegeix(abans, d)
+    finally:
+        desador.desa()
+    log(f'Títols: {len(cua)} discos antics buscats a Discogs, {trobats} trobats, {corregits} títols corregits')
+
+
 # ------------------------------------------------------------------ completar un disc
 def completa(d, artistes, estils_meus):
     nom_art = artistes.get(str(d['artista']), '')
@@ -114,9 +258,14 @@ def completa(d, artistes, estils_meus):
         if d.get('barcode') or d.get('catno'):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
-            dg = DG.cerca(nom_art, titol)
+            temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1]
+            dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d)
     except Exception as e:
         log(f'  Discogs: error {e!r}')
+    if dg and dg.get('aprox'):
+        corregeix_titol(d, dg['titol'], nom_art)
+        auto.add('titol')
+        canvis.append('titol')
     if dg:
         if not nom_art and dg.get('artista'):
             d['artista'] = id_artista(dg['artista'], artistes)
@@ -1232,6 +1381,15 @@ def main():
                     pas()
                 except Exception as e:
                     log(f'{nom}: error {e!r}')
+        try:
+            reanomena_pendents()
+        except Exception as e:
+            log(f'NAS: error reanomenant carpetes {e!r}')
+        if a.mode == 'nit':
+            try:
+                revisa_titols(int(CFG.get('titols_per_nit', 100) or 100))
+            except Exception as e:
+                log(f'Títols: error {e!r}')
         try:
             arregla_noms_nas()
         except Exception as e:
