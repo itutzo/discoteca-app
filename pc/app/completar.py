@@ -224,31 +224,51 @@ def reanomena_pendents():
             desa('discs.json', discs)
 
 
-# format dels arxius: «Artista - Títol del disc - 03 - Cançó.mp3», cada paraula amb majúscula
+# format dels arxius: «Artista - Títol del disc - 03 - Cançó.mp3», cada paraula amb majúscula, i als discos dobles
+# «Artista - Títol del disc - CD2 - 03 - Cançó.mp3»
 FORMAT = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$')
+FORMAT_CD = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+CD\s*(\d{1,2})\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$', re.I)
+MARCA_CD = re.compile(r'(?:^|(?<=[\s\-_(\[]))(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b\s*[)\]]?\s*[-–—.]?\s*', re.I)
 
 
-def nom_arxiu(art, tit, base):
-    """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»).
-    Torna (número, nom), o None si no se n'entén el número de pista (llavors no es toca)."""
-    m = FORMAT.match(base)
+def nom_arxiu(art, tit, base, cd_carpeta=None):
+    """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»;
+    en un disc doble, «CD2 - 03 Cançó» o «2-03 Cançó» -> «Artista - Títol - CD2 - 03 - Cançó»).
+    cd_carpeta és el número de CD si l'arxiu és dins d'una subcarpeta «CD2» o «Disc 2».
+    Torna ((cd, número), nom), o None si no se n'entén el número de pista (llavors no es toca)."""
+    cd = cd_carpeta
+    m = FORMAT_CD.match(base)
+    m1 = FORMAT.match(base)
     if m and N(m.group(1)) == N(art) and N(m.group(2)) == N(tit):
-        num, can = m.group(3), m.group(4)
+        cd, num, can = int(m.group(3)), m.group(4), m.group(5)
+    elif m1 and N(m1.group(1)) == N(art) and N(m1.group(2)) == N(tit):
+        num, can = m1.group(3), m1.group(4)
     else:
-        if re.search(r'(?:^|[\s-])(?:CD|Disc)\s*\d', base, re.I):
-            return None     # discos dobles amb el CD al nom: no es toquen
-        num, can = num_titol(base)
+        mc = MARCA_CD.search(base)
+        m2 = re.match(r'^(\d)\s*[-.]\s*(\d{2})\s*(?!\d)[-–—.]?\s*(\S.*)$', base)       # «2-03 Cançó»
+        if mc:
+            cd = int(mc.group(1))
+            esq, dre = base[:mc.start()].rstrip('([ -–—'), base[mc.end():].strip(' -–—.()[]')
+            base = f'{esq} - {dre}' if esq else dre
+            num, can = num_titol(base)
+        elif m2:
+            cd, num, can = int(m2.group(1)), m2.group(2), m2.group(3)
+        else:
+            num, can = num_titol(base)
         if not num or re.match(r'^\d{1,3}\s', can):
-            return None     # «1-01 Cançó»: no és clar quin és el número de pista
-    can = majuscules(re.sub(r'\s+', ' ', can).strip())
+            return None     # no és clar quin és el número de pista
+    can = majuscules(re.sub(r'\s+', ' ', can).strip(' -–—'))
     if not can:
         return None
-    return int(num), f'{art} - {tit} - {int(num):02d} - {can}'
+    if cd:
+        return (cd, int(num)), f'{art} - {tit} - CD{cd} - {int(num):02d} - {can}'
+    return (0, int(num)), f'{art} - {tit} - {int(num):02d} - {can}'
 
 
 def formata_arxius(d, arrel):
-    """Posa el format «Artista - Títol - 01 - Cançó» als arxius de la carpeta del disc. L'artista i el títol
-    són els de la carpeta. No obre ni descarrega res: només canvia el nom. Torna quants n'ha canviat."""
+    """Posa el format «Artista - Títol - 01 - Cançó» (o «Artista - Títol - CD2 - 01 - Cançó» als discos dobles)
+    als arxius de la carpeta del disc. L'artista i el títol són els de la carpeta. No obre ni descarrega res:
+    només canvia el nom. Torna quants n'ha canviat."""
     c = d.get('carpeta')
     m = CARPETA.match(c or '')
     ruta = os.path.join(arrel, c or '')
@@ -257,11 +277,13 @@ def formata_arxius(d, arrel):
     art, tit = m.group(1).strip(), m.group(3).strip()
     canviats = errors = 0
     for root, _, files in os.walk(ruta):
+        sub = os.path.relpath(root, ruta)
+        mc = re.search(r'(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b', sub, re.I) if sub != '.' else None
         musica = [f for f in files if os.path.splitext(f)[1].lower() in EXT]
-        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0]) for f in musica}
-        nums_ = [x[0] for x in nous.values() if x]
-        # dos arxius amb el mateix número (dos CD a la mateixa carpeta): no es toca res d'aquesta carpeta
-        if len(nums_) != len(set(nums_)):
+        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None) for f in musica}
+        claus = [x[0] for x in nous.values() if x]
+        # dos arxius amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res d'aquesta carpeta
+        if len(claus) != len(set(claus)):
             continue
         for f, x in nous.items():
             if not x:
@@ -292,13 +314,14 @@ def formata_tots():
         canvi = total = 0
         for d in discs:
             c = d.get('carpeta')
-            if c not in mtimes or d.get('fmt_m') == mtimes[c] or not CARPETA.match(c):
+            # fmt_v 2: també els discos dobles («CD2»); les carpetes ja repassades es tornen a mirar un cop
+            if c not in mtimes or (d.get('fmt_m') == mtimes[c] and d.get('fmt_v') == 2) or not CARPETA.match(c):
                 continue
             n = formata_arxius(d, arrel)
             ruta = os.path.join(arrel, c)
             mt = os.stat(ruta).st_mtime
             if n >= 0:
-                d['fmt_m'] = mt         # si un arxiu no s'ha pogut canviar, es torna a provar la propera vegada
+                d['fmt_m'], d['fmt_v'] = mt, 2         # si un arxiu no s'ha pogut canviar, es torna a provar la propera vegada
             if n > 0:
                 total += n
                 if 'temes' in d.get('auto', []) and d.get('nas_t') == firma_temes(d.get('temes', [])):
