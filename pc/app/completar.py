@@ -371,6 +371,7 @@ def revisa_titols(n=100):
             nom_art = artistes.get(str(d['artista']), '')
             temes = [t[1] for t in d.get('temes') or [] if len(t) > 1]
             try:
+                temes = temes or temes_carpeta(d)
                 dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes, d.get('any', '')) \
                     or DG.cerca_relacionat(nom_art, d['titol'], d.get('any', ''))
             except Exception as e:
@@ -414,7 +415,7 @@ def completa(d, artistes, estils_meus):
         if d.get('barcode') or d.get('catno'):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
-            temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1]
+            temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1] or temes_carpeta(d)
             dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d, d.get('any', '')) \
                 or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
@@ -1657,6 +1658,19 @@ def arregla_noms_nas():
     log(f'NAS: {relleguts} discos amb els temes tornats a llegir dels noms dels arxius')
     fetes['noms_nas'] = AVUI
     desa('migracions.json', fetes)
+
+
+def temes_carpeta(d):
+    """Els títols dels temes de la carpeta del NAS (dels noms dels arxius, sense obrir-los), per comparar amb
+    Discogs quan la fitxa no en té."""
+    c = d.get('carpeta')
+    ruta = os.path.join(CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica'), c or '')
+    if not c or not os.path.isdir(ruta):
+        return []
+    try:
+        return [t[1] for t in temes_de_noms(arxius_de(ruta)) if t[1]]
+    except OSError:
+        return []
 
 
 def destacat(t):
