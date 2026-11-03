@@ -1071,18 +1071,24 @@ def tanda(mode, n, id_=None):
             ja = {id(x) for x in pend + sense_br}
             cua = pend + sense_br + [d for d in am_err if id(d) not in ja] + mai + \
                 [d for d in falten if id(d) not in ja and not d.get('am_error')]
-    cua = cua[:n]
-    log(f'Tanda «{mode}»: {len(cua)} discos')
+    # la tanda són n discos repassats de debò: els ajornats perquè AllMusic està bloquejat no compten,
+    # perquè si no els que no s'han repassat mai (que van darrere a la cua) no hi arribarien mai
+    total = min(n, len(cua))
+    log(f'Tanda «{mode}»: {total} discos')
     fets, saltats, compte = 0, 0, {'sí': 0, 'no': 0, 'error': 0, 'mb': 0}
     desador = Desador()
     try:
-        for i, d in enumerate(cua, 1):
+        i = 0
+        for d in cua:
+            if i >= total:
+                break
             # si AllMusic ens ha tancat la porta, no cal repassar ara els discos que només esperaven AllMusic
             if fonts._am_nav.bloquejat and d.get('am_error') and mode != 'disc' and d.get('estat') != 'pendent':
                 saltats += 1
                 continue
+            i += 1
             nom = f"{artistes.get(str(d['artista']), '?')} - {d.get('titol', '')}"
-            estat(f'{i}/{len(cua)} · {nom}')
+            estat(f'{i}/{total} · {nom}')
             abans = json.loads(json.dumps(d))
             try:
                 d.pop('reintenta', None)
