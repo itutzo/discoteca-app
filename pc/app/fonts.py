@@ -357,6 +357,40 @@ class Discogs:
                     return rel
         return None
 
+    def cerca_relacionat(self, artista, titol, any_=''):
+        """Per quan el disc és d'un artista relacionat: l'entrada diu «Grant Lee Buffalo» però el disc és del seu
+        cantant en solitari («Grant-Lee Phillips»), o al revés. Es busca el títol exacte sense artista i només
+        s'accepta si, segons Discogs, un artista és membre de l'altre."""
+        if len(NT(titol)) < 4:
+            return None
+        art_ok = lambda nom: bool(N(nom)) and (N(artista) in N(nom) or N(nom) in N(artista))
+        any_ = str(any_ or '')[:4]
+        cands = []
+        for q in ({'type': 'master', 'release_title': titol}, {'type': 'release', 'release_title': titol}):
+            r = self.api('/database/search', per_page=50, **q) or {}
+            for x in (r.get('results') or []):
+                art_x, _, tit_x = (x.get('title') or '').partition(' - ')
+                if NT(tit_x) == NT(titol) and not art_ok(art_x) and N(art_x) not in {N(c[2]) for c in cands}:
+                    cands.append((q['type'], x, art_x))
+        # primer els de l'any del disc
+        cands.sort(key=lambda c: str(c[1].get('year') or '') != any_ if any_ else 0)
+        for tipus, x, _ in cands[:4]:
+            if tipus == 'master':
+                m = self.api(f"/masters/{x['id']}")
+                rel = self.release(m['main_release']) if m else None
+                if rel:
+                    rel['master'] = m
+            else:
+                rel = self.release(x['id'])
+            if not rel or not rel.get('artista_id'):
+                continue
+            a = self.api(f"/artists/{rel['artista_id']}") or {}
+            noms = [re.sub(r'\s*\(\d+\)$', '', g.get('name', '')) for g in (a.get('groups') or []) + (a.get('members') or [])]
+            if any(N(n) and N(n) == N(artista) for n in noms):
+                rel['relacionat'] = True
+                return rel
+        return None
+
     def release(self, rid):
         rel = self.api(f'/releases/{rid}')
         if not rel:
