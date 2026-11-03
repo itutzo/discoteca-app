@@ -1254,13 +1254,15 @@ def relleeix_temes(d, ruta, mtime):
     nous = temes_de_noms(arxius_de(ruta))
     if not nous:
         return False
-    vells = [list(t) + [''] * (6 - len(t)) for t in d.get('temes', [])]
+    vells = [destacat(t) for t in d.get('temes', [])]
     for t in nous:      # conserva el compositor i les marques de cada tema
         o = max(vells, key=lambda v: sim(v[1], t[1]), default=None)
         if o and sim(o[1], t[1]) <= 0.75:
             o = next((v for v in vells if v[0] and v[0] == t[0] and v[3] == t[3]), None)
         if o:
             t[2], t[4], t[5] = o[2], o[4], o[5]
+            if o[6]:
+                t.append(o[6])
     canvia = firma_temes(nous) != firma_temes(vells)
     d['temes'] = nous
     d['nas_t'] = firma_temes(nous)
@@ -1442,7 +1444,7 @@ def ajunta_discs_partits(discs, orfes, artistes, arrel):
         if not k:
             continue
         art = N(artistes.get(str(x.get('artista')), ''))
-        temes_x = [list(t) + [''] * (6 - len(t)) for t in x.get('temes') or []]
+        temes_x = [destacat(t) for t in x.get('temes') or []]
         for w in discs:
             if w is x or id(w) in map(id, fora) or not w.get('carpeta') or w in orfes \
                     or N(artistes.get(str(w.get('artista')), '')) != art:
@@ -1454,7 +1456,7 @@ def ajunta_discs_partits(discs, orfes, artistes, arrel):
             if not os.path.isdir(ruta) or not mateixos_temes(temes_x, temes_de_noms(arxius_de(ruta))):
                 continue
             # la fitxa que es queda: els seus temes són d'un altre CD (el que tenia abans, o l'1)
-            temes_w = [list(t) + [''] * (6 - len(t)) for t in w.get('temes') or []]
+            temes_w = [destacat(t) for t in w.get('temes') or []]
             # la columna del disc pot portar una marca antiga de l'Access («*», una cara): si no diu cap CD, mana el títol
             es_cd = lambda L: any(re.match(r'^CD\s*\d+$', str(t[3]).strip(), re.I) for t in L)
             if temes_x and not es_cd(temes_x):
@@ -1657,6 +1659,34 @@ def arregla_noms_nas():
     desa('migracions.json', fetes)
 
 
+def destacat(t):
+    """Els temes destacats (l'estrella «*» de l'Access, com els «picks» d'AllMusic) van a t[6] = 1, perquè t[3] és
+    la cara o el CD del tema. Torna el tema allargat a 7 columnes."""
+    t = list(t) + [''] * (6 - len(t)) + [0] * (7 - max(len(t), 6))
+    if str(t[3]).strip() == '*':
+        t[3], t[6] = '', 1
+    return t
+
+
+def migra_destacats():
+    """Un sol cop: l'estrella dels temes destacats passa de la columna de la cara/CD (t[3]) a la seva (t[6])."""
+    fetes = llegeix('migracions.json', {})
+    if fetes.get('destacats'):
+        return
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n = 0
+        for d in discs:
+            if any(len(t) > 3 and str(t[3]).strip() == '*' for t in d.get('temes') or []):
+                d['temes'] = [destacat(t) if len(t) > 3 and str(t[3]).strip() == '*' else t for t in d['temes']]
+                n += 1
+        if n:
+            desa('discs.json', discs)
+    fetes['destacats'] = AVUI
+    desa('migracions.json', fetes)
+    log(f'Temes destacats: {n} discos amb l\'estrella a la seva columna')
+
+
 def unifica_variables():
     """«sin» i «sin bitrate» (bitrate variable) passen a «VBR»; després s'hi afegeix la mitjana: «VBR ~208»."""
     with comu.BLOC:
@@ -1693,6 +1723,10 @@ def main():
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
         return
+    try:
+        migra_destacats()
+    except Exception as e:
+        log(f'Temes destacats: error {e!r}')
     try:
         tradueix_catala()
     except Exception as e:
