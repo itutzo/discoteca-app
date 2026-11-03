@@ -270,29 +270,53 @@ class Discogs:
         res = r.get('results') or []
         return self.release(res[0]['id']) if res else None
 
-    def cerca(self, artista, titol):
-        art_ok = lambda nom: N(artista) in N(nom) or N(nom) in N(artista)
-        # 1. versió principal (master) per artista i títol; 2. cerca lliure de masters; 3. qualsevol edició
+    def cerca(self, artista, titol, any_='', temes=None):
+        """Busca l'edició d'un disc per artista i títol.
+        Discogs numera els artistes que es diuen igual («Borracho (4)») i moltes edicions no tenen versió
+        principal (master), com les maquetes en cinta. Per això també es busca l'edició (release) amb els
+        camps d'artista i títol, es miren més resultats i, si n'hi ha més d'un que encaixa, es tria el de
+        l'any del disc i el que té més temes iguals."""
+        art_ok = lambda nom: bool(N(nom)) and (N(artista) in N(nom) or N(nom) in N(artista))
+        any_ = str(any_ or '')[:4]
+        meus = {NT(t) for t in (temes or []) if NT(t)}
+        candidats, vist = [], set()
         for q in ({'type': 'master', 'artist': artista, 'release_title': titol},
+                  {'type': 'release', 'artist': artista, 'release_title': titol},
                   {'type': 'master', 'q': f'{artista} {titol}'},
                   {'type': 'release', 'q': f'{artista} {titol}'}):
-            r = self.api('/database/search', **q) or {}
-            for x in (r.get('results') or [])[:6]:
+            r = self.api('/database/search', per_page=50, **q) or {}
+            for x in (r.get('results') or []):
                 # el títol de la cerca és «Artista - Títol»
                 art_x, _, tit_x = (x.get('title') or '').partition(' - ')
-                if not art_ok(art_x) or NT(tit_x) != NT(titol):
+                if not art_ok(art_x) or NT(tit_x) != NT(titol) or (q['type'], x.get('id')) in vist:
                     continue
-                if q['type'] == 'master':
-                    m = self.api(f"/masters/{x['id']}")
-                    rel = self.release(m['main_release']) if m else None
-                    if rel:
-                        rel['master'] = m
-                        return rel
-                else:
-                    rel = self.release(x['id'])
-                    if rel:
-                        return rel
-        return None
+                vist.add((q['type'], x.get('id')))
+                candidats.append((q['type'], x))
+            # n'hi ha prou si ja tenim un candidat de l'any del disc (o el disc no té any)
+            if candidats and (not any_ or any(str(x.get('year') or '') == any_ for _, x in candidats)):
+                break
+        if not candidats:
+            return None
+        # primer els de l'any del disc; dins de cada grup, l'ordre de Discogs
+        candidats.sort(key=lambda c: str(c[1].get('year') or '') != any_ if any_ else 0)
+        millor, punts_millor = None, None
+        for tipus, x in candidats[:5 if meus else 1]:
+            if tipus == 'master':
+                m = self.api(f"/masters/{x['id']}")
+                rel = self.release(m['main_release']) if m else None
+                if rel:
+                    rel['master'] = m
+            else:
+                rel = self.release(x['id'])
+            if not rel:
+                continue
+            iguals = len(meus & {NT(t['titol']) for t in rel['temes']})
+            punts = (iguals, str(x.get('year') or rel.get('any') or '') == any_)
+            if millor is None or punts > punts_millor:
+                millor, punts_millor = rel, punts
+            if meus and iguals >= max(1, len(meus) // 2):
+                break
+        return millor
 
     def release(self, rid):
         rel = self.api(f'/releases/{rid}')
@@ -506,6 +530,31 @@ def _seccio(s, patro):
     return None
 
 
+def _album_de(d, artista, url_artista=None):
+    """Diu si la pàgina d'un disc d'Apple Music és de l'artista (per les dades del disc o, si no n'hi ha,
+    pel primer enllaç d'artista de la pàgina, que és el de la capçalera)."""
+    autors = []
+    for sc in d.select('script[type="application/ld+json"]'):
+        try:
+            j = json.loads(sc.string or sc.get_text() or '{}')
+        except ValueError:
+            continue
+        for x in (j if isinstance(j, list) else [j]):
+            if isinstance(x, dict) and x.get('byArtist'):
+                ba = x['byArtist']
+                autors += [y for y in (ba if isinstance(ba, list) else [ba]) if isinstance(y, dict)]
+    if not autors:
+        el = d.select_one('a[href*="/artist/"]')
+        autors = [{'name': txt(el), 'url': el.get('href', '')}] if el else []
+    url_id = lambda u: (re.search(r'/(\d+)(?:[/?]|$)', u or '') or [None, None])[1]
+    for y in autors:
+        if url_artista and url_id(y.get('url')) and url_id(y.get('url')) == url_id(url_artista):
+            return True
+        if N(y.get('name')) and N(y.get('name')) == N(artista):
+            return True
+    return False
+
+
 def apple(artista, titol):
     out = {'artistes': [], 'discos': []}
     s = sopa(AP + '/es/search?term=' + urllib.parse.quote(artista))
@@ -520,10 +569,17 @@ def apple(artista, titol):
                     vist[txt(x)] = urllib.parse.urljoin(AP, x['href'].split('?')[0])
             out['artistes'] = [{'nom': k, 'url': v} for k, v in vist.items()][:25]
     s = sopa(AP + '/es/search?term=' + urllib.parse.quote(f'{artista} {titol}'))
-    b = next((x['href'] for x in (s.select('a[href*="/album/"]') if s else []) if N(titol) in N(x.get_text())), None)
-    if b:
-        d = sopa(urllib.parse.urljoin(AP, b.split('?')[0]))
-        box = _seccio(d, 'También te puede gustar|You Might Also Like') if d else None
+    # el disc ha de ser de l'artista: si no, quan el nom és una paraula corrent («Borracho»)
+    # Apple dona un senzill d'un altre artista i les seves recomanacions no hi tenen res a veure
+    d = None
+    for b in list(dict.fromkeys(x['href'].split('?')[0] for x in (s.select('a[href*="/album/"]') if s else [])
+                                if N(titol) in N(x.get_text())))[:3]:
+        p = sopa(urllib.parse.urljoin(AP, b))
+        if p and _album_de(p, artista, a):
+            d = p
+            break
+    if d:
+        box = _seccio(d, 'También te puede gustar|You Might Also Like')
         if box:
             for li in box.select('li'):
                 al = li.select_one('a[href*="/album/"]')

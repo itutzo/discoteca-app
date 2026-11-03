@@ -114,7 +114,7 @@ def completa(d, artistes, estils_meus):
         if d.get('barcode') or d.get('catno'):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
-            dg = DG.cerca(nom_art, titol)
+            dg = DG.cerca(nom_art, titol, d.get('any', ''), [t[1] for t in d.get('temes', []) if len(t) > 1])
     except Exception as e:
         log(f'  Discogs: error {e!r}')
     if dg:
