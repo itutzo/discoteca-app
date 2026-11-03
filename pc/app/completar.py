@@ -371,7 +371,7 @@ def revisa_titols(n=100):
             nom_art = artistes.get(str(d['artista']), '')
             temes = [t[1] for t in d.get('temes') or [] if len(t) > 1]
             try:
-                dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes) \
+                dg = DG.cerca(nom_art, d['titol'], d.get('any', ''), temes) or DG.cerca_aprox(nom_art, d['titol'], temes, d.get('any', '')) \
                     or DG.cerca_relacionat(nom_art, d['titol'], d.get('any', ''))
             except Exception as e:
                 log(f"  Discogs: error {e!r}")
@@ -415,7 +415,7 @@ def completa(d, artistes, estils_meus):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
             temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1]
-            dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d) \
+            dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d, d.get('any', '')) \
                 or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
         log(f'  Discogs: error {e!r}')

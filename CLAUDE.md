@@ -76,6 +76,7 @@ python pc/app/servidor.py                         # obre http://localhost:8800/
   - Arxius: «Artista - Àlbum - Disc 2 - 01 - Cançó» (sempre «Disc N», mai «CD N»).
   - Fitxa de l'app: els temes es mostren «Disc 1 10» en una sola línia. Internament, la columna `t[3]` dels temes és la cara o el disc (`CD1`/`CD2`), i `t[6] = 1` marca un **tema destacat** (l'estrella `*` de l'Access, com els *picks* d'AllMusic; la fitxa hi posa ★). La migració `destacats` va treure les estrelles de `t[3]`. Les estrelles són de l'Ignasi: no s'han de perdre mai en reordenar o ajuntar temes.
   - Si un disc doble tenia una fitxa per CD («... - CD1», «... - CD2») i l'Ignasi n'ajunta els arxius en una sola carpeta, queda **una sola fitxa** amb els temes marcats del seu disc i ordenats per disc i número (`ajunta_discs_partits()` a `llegeix_nas()`).
+- **Títols mal escrits:** un disc s'ha de trobar encara que el títol no estigui ben escrit, si s'assembla prou al de Discogs (`cerca_aprox()`): ≥70 % de semblança i ≥60 % dels temes iguals; si l'entrada no té temes (moltes de l'Access), ≥90 % de semblança, el mateix any i un sol candidat. Llavors el títol es corregeix sol a la fitxa i a la carpeta del NAS (és l'única excepció a «no sobreescriure»).
 - **Duplicats:** es queda una sola entrada, la que té més fonts d'internet i més dades, i fusiona els camps de l'usuari. Els noms bons són els de la carpeta que existeix al NAS.
 - Només **Chrome**, mai Edge.
 - Mai demanar ni mostrar els tokens. L'App key de Dropbox no és secreta.
