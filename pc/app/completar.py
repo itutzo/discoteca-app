@@ -225,15 +225,15 @@ def reanomena_pendents():
 
 
 # format dels arxius: «Artista - Títol del disc - 03 - Cançó.mp3», cada paraula amb majúscula, i als discos dobles
-# «Artista - Títol del disc - CD2 - 03 - Cançó.mp3»
+# «Artista - Títol del disc - Disc 2 - 03 - Cançó.mp3»
 FORMAT = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$')
-FORMAT_CD = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+CD\s*(\d{1,2})\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$', re.I)
+FORMAT_CD = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\s+[-–—]\s+(\d{1,3})\s+[-–—]\s+(\S.*)$', re.I)
 MARCA_CD = re.compile(r'(?:^|(?<=[\s\-_(\[]))(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b\s*[)\]]?\s*[-–—.]?\s*', re.I)
 
 
 def nom_arxiu(art, tit, base, cd_carpeta=None):
     """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»;
-    en un disc doble, «CD2 - 03 Cançó» o «2-03 Cançó» -> «Artista - Títol - CD2 - 03 - Cançó»).
+    en un disc doble, «CD2 - 03 Cançó» o «2-03 Cançó» -> «Artista - Títol - Disc 2 - 03 - Cançó»).
     cd_carpeta és el número de CD si l'arxiu és dins d'una subcarpeta «CD2» o «Disc 2».
     Torna ((cd, número), nom), o None si no se n'entén el número de pista (llavors no es toca)."""
     cd = cd_carpeta
@@ -261,12 +261,12 @@ def nom_arxiu(art, tit, base, cd_carpeta=None):
     if not can:
         return None
     if cd:
-        return (cd, int(num)), f'{art} - {tit} - CD{cd} - {int(num):02d} - {can}'
+        return (cd, int(num)), f'{art} - {tit} - Disc {cd} - {int(num):02d} - {can}'
     return (0, int(num)), f'{art} - {tit} - {int(num):02d} - {can}'
 
 
 def formata_arxius(d, arrel):
-    """Posa el format «Artista - Títol - 01 - Cançó» (o «Artista - Títol - CD2 - 01 - Cançó» als discos dobles)
+    """Posa el format «Artista - Títol - 01 - Cançó» (o «Artista - Títol - Disc 2 - 01 - Cançó» als discos dobles)
     als arxius de la carpeta del disc. L'artista i el títol són els de la carpeta. No obre ni descarrega res:
     només canvia el nom. Torna quants n'ha canviat."""
     c = d.get('carpeta')
@@ -314,7 +314,7 @@ def formata_tots():
         canvi = total = 0
         for d in discs:
             c = d.get('carpeta')
-            # fmt_v 2: també els discos dobles («CD2»); les carpetes ja repassades es tornen a mirar un cop
+            # fmt_v 2: també els discos dobles («Disc 2»); les carpetes ja repassades es tornen a mirar un cop
             if c not in mtimes or (d.get('fmt_m') == mtimes[c] and d.get('fmt_v') == 2) or not CARPETA.match(c):
                 continue
             n = formata_arxius(d, arrel)
@@ -1150,7 +1150,7 @@ def num_titol(nom):
 
 def temes_de_noms(arxius):
     out = []
-    multi = len({s for s, _ in arxius}) > 1 or any(re.search(r'- CD\d+ -', a) for _, a in arxius)
+    multi = len({s for s, _ in arxius}) > 1 or any(re.search(r'- (?:CD|Disc) ?\d+ -', a) for _, a in arxius)
     for sub, a in arxius:
         nom = os.path.splitext(a)[0]
         cd = re.search(r'(?:CD|Disc)\s*(\d+)', sub + ' ' + nom, re.I)
