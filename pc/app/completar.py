@@ -1455,10 +1455,12 @@ def ajunta_discs_partits(discs, orfes, artistes, arrel):
                 continue
             # la fitxa que es queda: els seus temes són d'un altre CD (el que tenia abans, o l'1)
             temes_w = [list(t) + [''] * (6 - len(t)) for t in w.get('temes') or []]
-            if temes_x and not any(str(t[3]).strip() for t in temes_x):
+            # la columna del disc pot portar una marca antiga de l'Access («*», una cara): si no diu cap CD, mana el títol
+            es_cd = lambda L: any(re.match(r'^CD\s*\d+$', str(t[3]).strip(), re.I) for t in L)
+            if temes_x and not es_cd(temes_x):
                 for t in temes_x:
                     t[3] = f'CD{k}'
-            if temes_w and not any(str(t[3]).strip() for t in temes_w):
+            if temes_w and not es_cd(temes_w):
                 kw = 1 if k != 1 else 2
                 for t in temes_w:
                     t[3] = f'CD{kw}'
