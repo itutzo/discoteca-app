@@ -906,6 +906,24 @@ def mateix_disc(a1, t1, a2, t2):
     return sim(a1, a2) > 0.85 and (ta == tb or SequenceMatcher(None, ta, tb).ratio() > 0.9)
 
 
+def mateix_contingut(a1, d1, a2, d2):
+    """El mateix disc amb un títol del tot diferent: a l'Access hi havia «Better Than Ezra» (el nom del grup) i la
+    carpeta del NAS diu «Before The Robots». Mateix artista, mateix any, exactament els mateixos temes (5 o més)
+    i només una de les dues entrades té carpeta al NAS: si totes dues en tenen, són dos discos diferents
+    (encara que un tingui els temes mal copiats) i no es toquen."""
+    if N(a1) != N(a2) or not N(a1):
+        return False
+    if not str(d1.get('any') or '').strip() or str(d1.get('any')).strip() != str(d2.get('any') or '').strip():
+        return False
+    if d1.get('carpeta') and d2.get('carpeta'):
+        return False
+    t1, t2 = d1.get('temes') or [], d2.get('temes') or []
+    if len(t1) < 5 or len(t1) != len(t2):
+        return False
+    return all(len(x) > 1 and len(y) > 1 and N(x[1]) and (N(x[1]) == N(y[1]) or sim(x[1], y[1]) > 0.85)
+               for x, y in zip(t1, t2))
+
+
 CAMPS_MEUS = ('classificacio', 'notes', 'barcode', 'catno', 'segell', 'edicio', 'any', 'genere', 'estil', 'clasamg',
               'bitrate', 'qualitat', 'usuari', 'discogs_release', 'discogs_master', 'temes', 'interprets')
 
@@ -938,7 +956,8 @@ def elimina_duplicats():
             for x in range(len(L)):
                 for y in range(x + 1, len(L)):
                     a, b = discs[L[x]], discs[L[y]]
-                    if arrel_de(L[x]) != arrel_de(L[y]) and mateix_disc(nom(a), a.get('titol'), nom(b), b.get('titol')):
+                    if arrel_de(L[x]) != arrel_de(L[y]) and (mateix_disc(nom(a), a.get('titol'), nom(b), b.get('titol'))
+                                                           or mateix_contingut(nom(a), a, nom(b), b)):
                         pare[arrel_de(L[x])] = arrel_de(L[y])
         grups = {}
         for i, d in enumerate(discs):
@@ -957,9 +976,19 @@ def elimina_duplicats():
             w = g[0]
             noms_abans = [f"«{nom(x)} - {x.get('titol', '')}»" for x in g]
             for x in g[1:]:
+                auto_w, auto_x = set(w.get('auto') or []), set(x.get('auto') or [])
                 for c in CAMPS_MEUS:
-                    if not w.get(c) and x.get(c):
+                    if not x.get(c):
+                        continue
+                    # el que has escrit tu guanya al que s'ha omplert automàticament
+                    if not w.get(c) or (c in auto_w and c not in auto_x):
                         w[c] = x[c]
+                        if c in auto_x:
+                            auto_w.add(c)
+                        else:
+                            auto_w.discard(c)
+                if auto_w or 'auto' in w:
+                    w['auto'] = sorted(auto_w)
                 for s in suports(x):
                     afegeix_suport(w, s)
                 if x.get('data') and (not w.get('data') or x['data'] < w['data']):
