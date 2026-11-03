@@ -229,7 +229,7 @@ fieldset.sups input{width:auto}
 const $ = s => document.querySelector(s);
 const urlSegur = u => /^https?:\/\//i.test(String(u||'')) ? esc(u) : '#';   // mai «javascript:»
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const PAGE = 120;
 
 let artistes = {}, discs = [], byId = new Map(), newArtists = {};
@@ -476,21 +476,54 @@ function buildSim(){
 }
 const num = v => parseFloat(String(v??'').replace(',','.')) || 0;
 const yearSim = (a,b) => (+a && +b) ? Math.max(0, 1 - Math.abs(a-b)/12) : 0;
+// Afinitat entre artistes segons internet (es carrega en segon pla): els artistes similars que donen Last.fm,
+// Apple Music, AllMusic i Discogs per a aquest artista, i les etiquetes d'estil de Last.fm («hard rock», «jazz fusion»...).
+// L'estil escrit a la fitxa («Hard Rock») és massa ampli: sol, només compta una mica.
+const simRecsArt = new Map(); let simLF = null; const vecCache = new Map();
+function vecArt(a){
+  const k = tok2(artName(a)); if(vecCache.has(k)) return vecCache.get(k);
+  const v = simLF && simLF[k] ? vectorLF(simLF[k]) : new Map();
+  let nn = 0; v.forEach(x => nn += x*x);
+  const r = {v, n: Math.sqrt(nn)}; vecCache.set(k, r); return r;
+}
+function afinitat(d, a){
+  let v = 0;
+  const R = simRecsArt.get(String(d.artista)), nom = tok2(artName(a));
+  if(R && R.has(nom)) v += 4 + R.get(nom);                    // les fonts el donen com a similar (més fonts, més punts)
+  if(d._ppl && d._ppl.has(tok(artName(a)))) v += 4;           // un músic del disc és aquest artista («Greg Howe» a Howe II)
+  return v;
+}
+function estilLF(d, a){
+  const x = vecArt(d.artista), y = vecArt(a);
+  return x.n && y.n ? cosinus(x.v, y.v, y.n) : null;          // null: Last.fm encara no en té etiquetes
+}
+function puntsEstil(d, x, c){
+  if(c != null) return 5*c;
+  let v = 0;
+  if(d.estil && x.estil && tok(d.estil)===tok(x.estil)) v += 1.2;
+  if(d.genere && x.genere && tok(d.genere)===tok(x.genere)) v += 0.3;
+  return v;
+}
 function similarDiscs(d, n=5){
   if(!simIdx) buildSim();
-  const score = new Map();
+  const score = new Map(), fort = new Set(), perArt = new Map();
   const add = (x, v) => { if(x.artista===d.artista || x.id===d.id) return; score.set(x, (score.get(x)||0) + v); };
-  for(const p of d._ppl){ const L = simIdx.byPerson.get(p)||[]; if(L.length < 60) L.forEach(x=>add(x, 3)); }
+  for(const p of d._ppl){ const L = simIdx.byPerson.get(p)||[]; if(L.length < 60) L.forEach(x=>{ add(x, 3); fort.add(x); }); }
   for(const x of discs){
     if(x.artista===d.artista) continue;
-    let v = 0;
-    if(d.estil && x.estil && tok(d.estil)===tok(x.estil)) v += 2;
-    if(d.genere && x.genere && tok(d.genere)===tok(x.genere)) v += 0.5;
-    for(const c of d._comp) if(x._comp.has(c)) { v += 1.5; break; }
-    if(v){ v += yearSim(+d.any, +x.any)*1.5 + num(x.classificacio)/10; add(x, v); }
+    const k = String(x.artista);
+    if(!perArt.has(k)) perArt.set(k, [afinitat(d, k), estilLF(d, k)]);
+    const [af, c] = perArt.get(k);
+    let v = af + puntsEstil(d, x, c);
+    for(const cc of d._comp) if(x._comp.has(cc)) { v += 1.5; break; }
+    if(af || (c != null && c >= 0.5)) fort.add(x);
+    if(v >= 1){ v += yearSim(+d.any, +x.any)*1.5 + num(x.classificacio)/10; add(x, v); }
   }
   const out = [], seen = new Set();
-  for(const [x] of [...score].sort((a,b)=>b[1]-a[1])){ if(seen.has(x.artista)) continue; seen.add(x.artista); out.push(x); if(out.length===n) break; }
+  const ordenats = [...score].sort((a,b)=>b[1]-a[1]).map(([x])=>x);
+  // si hi ha prou discos amb una relació de debò (músics, fonts d'internet), no s'omple amb els que només comparteixen l'estil
+  const L = ordenats.filter(x=>fort.has(x)).length >= 3 ? ordenats.filter(x=>fort.has(x)) : ordenats;
+  for(const x of L){ if(seen.has(x.artista)) continue; seen.add(x.artista); out.push(x); if(out.length===n) break; }
   return out;
 }
 function similarArtists(d, n=5){
@@ -500,17 +533,39 @@ function similarArtists(d, n=5){
   const res = [];
   for(const [a, A] of simIdx.byArtist){
     if(a === String(d.artista)) continue;
-    let v = 0;
-    for(const [p] of me.ppl) if(A.ppl.has(p) && (simIdx.byPerson.get(p)||[]).length < 60) v += 3;
-    let inter = 0, uni = new Set([...me.sty.keys(), ...A.sty.keys()]).size;
-    for(const k of me.sty.keys()) if(A.sty.has(k)) inter++;
-    v += uni ? 4*inter/uni : 0;
-    if(!v) continue;
+    let v = afinitat(d, a), fort = v > 0;
+    for(const [p] of me.ppl) if(A.ppl.has(p) && (simIdx.byPerson.get(p)||[]).length < 60){ v += 3; fort = true; }
+    const c = estilLF(d, a);
+    if(c != null){ v += 5*c; if(c >= 0.5) fort = true; }
+    else {
+      let inter = 0, uni = new Set([...me.sty.keys(), ...A.sty.keys()]).size;
+      for(const k of me.sty.keys()) if(A.sty.has(k)) inter++;
+      v += uni ? 2.5*inter/uni : 0;
+    }
+    if(v < 1) continue;
     const y = A.years.length ? A.years.reduce((p,q)=>p+q)/A.years.length : 0;
     v += yearSim(myYear, y)*1.5 + Math.min(A.years.length, 6)*0.1;
-    res.push([a, v, A.best]);
+    res.push([a, v, A.best, fort]);
   }
-  return res.sort((x,y)=>y[1]-x[1]).slice(0,n);
+  res.sort((x,y)=>y[1]-x[1]);
+  const forts = res.filter(x=>x[3]);
+  return (forts.length >= 3 ? forts : res).slice(0,n);
+}
+function similarsHTML(d){
+  const sa = similarArtists(d), sd = similarDiscs(d);
+  return (sa.length?`<h3 class="sec">Artistes similars a la teva col·lecció</h3><div class="others">${sa.map(([a,,best])=>`<button class="card" type="button" data-artist="${esc(a)}">${sleeveHTML(best,false)}<span class="t">${esc(artName(a))}</span><span class="a">${esc(best.estil||best.genere||'')}</span></button>`).join('')}</div>`:'')
+    + (sd.length?`<h3 class="sec">Discos similars a la teva col·lecció</h3><div class="others">${sd.map(cardHTML).join('')}</div>`:'');
+}
+async function milloraSimilars(d){
+  try{
+    const key = String(d.artista);
+    if(!recCache.has(key)) recCache.set(key, api('/api/recs/'+encodeURIComponent(key)).then(x=>x && x.artistes ? x : null).catch(()=>null));
+    const [r, LF] = await Promise.all([recCache.get(key), simLF ? null : dadesLF()]);
+    if(LF && !simLF){ simLF = LF; calculaIDF(LF); vecCache.clear(); }
+    if(r && !simRecsArt.has(key)) simRecsArt.set(key, new Map((r.artistes||[]).map(x=>[tok2(x.nom), (x.fonts||[]).length])));
+    const box = $('#similars');
+    if(box && current === d && !editing) box.innerHTML = similarsHTML(d);
+  }catch{}
 }
 function trackList(d){ return d.temes || []; }
 function peopleList(d){ return d.interprets || []; }
@@ -594,9 +649,7 @@ function renderSheet(){
     </div>
     ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]?x[3]+' ':'')+(x[0]||''))}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
-    ${(()=>{ const sa = similarArtists(d), sd = similarDiscs(d);
-      return (sa.length?`<h3 class="sec">Artistes similars a la teva col·lecció</h3><div class="others">${sa.map(([a,,best])=>`<button class="card" type="button" data-artist="${esc(a)}">${sleeveHTML(best,false)}<span class="t">${esc(artName(a))}</span><span class="a">${esc(best.estil||best.genere||'')}</span></button>`).join('')}</div>`:'')
-        + (sd.length?`<h3 class="sec">Discos similars a la teva col·lecció</h3><div class="others">${sd.map(cardHTML).join('')}</div>`:''); })()}
+    <div id="similars">${similarsHTML(d)}</div>
     <div id="discover"></div>
     ${d.fonts?`<p class="srcs">Fonts: ${Object.entries(d.fonts).map(([k,u])=>`<a href="${urlSegur(u)}" target="_blank" rel="noopener">${esc(k==='allmusic'?'AllMusic':k)}</a>`).join(' · ')}</p>`:''}
     ${others.length?`<h3 class="sec">Altres gravacions de ${esc(artName(d.artista))} · ${others.length}</h3><div class="others">${others.map(cardHTML).join('')}</div>`:''}
@@ -604,6 +657,7 @@ function renderSheet(){
   sh.querySelectorAll('.sleeve').forEach(el => io.observe(el));
   sh.scrollTop = 0;
   loadDiscover(d);
+  milloraSimilars(d);
 }
 // cada recomanació s'obre a la font que diu la seva etiqueta: la pàgina exacta si la tenim, si no la cerca d'aquella web
 const CERCA = {
@@ -804,7 +858,7 @@ function renderForm(){
       <label class="wide">Artista
         <select id="e_artista">${arts.map(([id,n])=>`<option value="${esc(id)}" ${String(d.artista)===String(id)?'selected':''}>${esc(n)}</option>`).join('')}<option value="__new">+ Artista nou…</option></select>
       </label>
-      <label class="wide" id="nomArtWrap" ${current?'':'hidden'}>Nom de l'artista (corregeix-lo si està mal escrit: es canvia a tots els seus discos)<input id="e_nomart" autocomplete="off" value="${esc(artName(d.artista))}"></label>
+      <label class="wide" id="nomArtWrap" ${current?'':'hidden'}>Nom de l'artista (si el canvies, et preguntarà si és per a tots els seus discos o només per a aquest)<input id="e_nomart" autocomplete="off" value="${esc(artName(d.artista))}"></label>
       <label class="wide" id="newArtWrap" hidden>Nom de l'artista nou<input id="e_newart" autocomplete="off"></label>
       <div class="wide notice">Per a un CD o vinil, n'hi ha prou amb el <b>codi de barres</b> o el <b>número de catàleg</b>. El disc queda «pendent de completar» i s'omple sol amb les dades de Discogs i AllMusic.
         <div class="scan"><label class="btn" for="e_scan">Llegeix el codi d'una foto</label><input id="e_scan" type="file" accept="image/*" capture="environment" hidden><span id="scanMsg"></span></div></div>
@@ -883,7 +937,12 @@ async function onSave(e){
     } else if(current && $('#e_nomart').value.trim() && $('#e_nomart').value.trim() !== artName(artista)){
       const nom = $('#e_nomart').value.trim();
       const ja = Object.entries({...artistes, ...newArtists}).find(([k, v]) => k !== String(artista) && norm(v) === norm(nom));
+      const altres = discs.filter(x => String(x.artista) === String(artista) && x.id !== current.id).length;
       if(ja) artista = ja[0];                       // ja existeix amb el nom bo: el disc hi passa
+      else if(altres && !confirm(`«${artName(artista)}» té ${altres} ${altres === 1 ? 'disc més' : 'discos més'} al catàleg.\n\nAccepta: el nom canvia a tots els seus discos (estava mal escrit).\nCancel·la: només aquest disc passa a «${nom}» (és un altre artista).`)){
+        artista = (await postJSON('/api/artista', {nom})).id;    // artista nou només per a aquest disc
+        artistes[artista] = nom;
+      }
       else { await postJSON('/api/artista', {id: String(artista), nom}); artistes[artista] = nom; }
       var reanomenat = true;
     }

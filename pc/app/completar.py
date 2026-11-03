@@ -128,12 +128,12 @@ def majuscules(t):
     return ' '.join(w[:1].upper() + w[1:] for w in str(t).split(' '))
 
 
-def reanomena_carpeta(d, titol_vell=None):
+def reanomena_carpeta(d, titol_vell=None, artistes=None):
     """«Artista - Any - Títol mal escrit» -> «Artista - Any - Títol Bo», i a dins els arxius
     «Artista - Títol mal escrit - 03 - Cançó.mp3» -> «Artista - Títol Bo - 03 - Cançó.mp3».
     Només si la carpeta té aquest format i el seu títol és el que estava mal escrit, o bé si l'Ignasi ha canviat
-    el títol a mà («reanomena_nas»). Si Windows no deixa (un arxiu obert, el NAS no hi és), es torna a provar
-    la nit següent."""
+    a mà el títol o l'artista («reanomena_nas»): llavors també canvia el nom de l'artista de la carpeta i dels
+    arxius. Si Windows no deixa (un arxiu obert, el NAS no hi és), es torna a provar la nit següent."""
     c = d.get('carpeta')
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     m = CARPETA.match(c or '')
@@ -142,14 +142,18 @@ def reanomena_carpeta(d, titol_vell=None):
             d.pop(k, None)
         return
     a_ma = d.get('reanomena_nas')
+    art_vell = art_nou = m.group(1).strip()
     if a_ma:
         # el títol vell és el que porta ara la carpeta (o el que portava, si ja es va reanomenar)
         vell = a_ma if isinstance(a_ma, str) else m.group(3)
         d['reanomena_nas'] = vell
+        nom_art = nom_carpeta((artistes or {}).get(str(d.get('artista')), ''))
+        if nom_art and N(nom_art) != N(art_vell):
+            art_nou = nom_art       # l'artista ha canviat («Greg Howe» -> «Howe II»)
     else:
         vell = titol_vell or d.get('titol_abans') or ''
     nou_t = majuscules(nom_carpeta(d['titol']))
-    nou = f'{m.group(1).strip()} - {m.group(2)} - {nou_t}'
+    nou = f'{art_nou} - {m.group(2)} - {nou_t}'
     if nou != c:
         if not a_ma and N(m.group(3)) != N(vell):
             d.pop('carpeta_nova', None)
@@ -169,16 +173,17 @@ def reanomena_carpeta(d, titol_vell=None):
         d['carpeta'] = nou
         log(f'  NAS: carpeta «{c}» reanomenada a «{nou}»')
     d.pop('carpeta_nova', None)
-    if reanomena_arxius(os.path.join(arrel, nou), vell, nou_t):
+    if reanomena_arxius(os.path.join(arrel, nou), vell, nou_t, art_vell, art_nou):
         d['arxius_pendents'] = True
     else:
         d.pop('arxius_pendents', None)
         d.pop('reanomena_nas', None)
 
 
-def reanomena_arxius(ruta, vell, nou_t):
-    """Canvia només la part del títol del disc als noms dels arxius («Artista - Títol - 03 - Cançó.mp3»).
-    No obre ni descarrega res: només canvia el nom. Torna quants no s'han pogut canviar."""
+def reanomena_arxius(ruta, vell, nou_t, art_vell=None, art_nou=None):
+    """Canvia la part del títol del disc als noms dels arxius («Artista - Títol - 03 - Cançó.mp3») i, si l'artista
+    ha canviat, també la de l'artista. No obre ni descarrega res: només canvia el nom.
+    Torna quants no s'han pogut canviar."""
     if not N(vell):
         return 0
     canviats, errors = 0, 0
@@ -188,7 +193,10 @@ def reanomena_arxius(ruta, vell, nou_t):
             m = re.match(r'^(.+?)\s*[-–—]\s*(.+?)\s*[-–—]\s*(\d{1,3}\s*[-–—]\s*.+)$', base)
             if not m or N(m.group(2)) != N(vell) or ext.lower() not in EXT:
                 continue
-            nou = f'{m.group(1).strip()} - {nou_t} - {m.group(3).strip()}{ext}'
+            art = m.group(1).strip()
+            if art_nou and art_vell and N(art) == N(art_vell):
+                art = art_nou
+            nou = f'{art} - {nou_t} - {m.group(3).strip()}{ext}'
             if nou == f or (nou.lower() != f.lower() and os.path.exists(os.path.join(root, nou))):
                 continue
             try:
@@ -203,12 +211,14 @@ def reanomena_arxius(ruta, vell, nou_t):
 
 
 def reanomena_pendents():
-    """Carpetes i arxius que no es van poder reanomenar (un arxiu obert, el NAS no hi era): un altre intent."""
+    """Carpetes i arxius que no es van poder reanomenar (un arxiu obert, el NAS no hi era), i els discos als quals
+    l'Ignasi ha canviat a mà el títol o l'artista: un altre intent."""
     with comu.BLOC:
         discs = llegeix('discs.json', [])
+        artistes = llegeix('artistes.json', {})
         pend = [d for d in discs if d.get('carpeta_nova') or d.get('arxius_pendents') or d.get('reanomena_nas')]
         for d in pend:
-            reanomena_carpeta(d)
+            reanomena_carpeta(d, artistes=artistes)
         if pend:
             desa('discs.json', discs)
 
