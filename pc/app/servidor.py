@@ -143,16 +143,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if p == '/api/disc':
                 rec = json.loads(self._body())
+                reanomena = False
                 with BLOC:
                     discs = llegeix('discs.json', [])
                     k = str(rec.get('id'))
                     for i, d in enumerate(discs):
                         if str(d.get('id')) == k:
+                            # la pàgina pot tenir una còpia antiga: la carpeta i els reanomenaments pendents
+                            # els porta el programa, no el formulari
+                            for c in ('carpeta', 'carpeta_nova', 'arxius_pendents', 'reanomena_nas'):
+                                if d.get(c):
+                                    rec[c] = d[c]
+                            reanomena = comu.marca_reanomena(d, rec)
                             discs[i] = rec
                             break
                     else:
                         discs.append(rec)
                     desa('discs.json', discs)
+                if reanomena and not (proces['p'] and proces['p'].poll() is None):
+                    # el títol ha canviat: es reanomenen ara mateix la carpeta del NAS i els arxius
+                    proces['p'] = subprocess.Popen(
+                        [sys.executable, os.path.join(os.path.dirname(__file__), 'completar.py'), '--mode', 'reanomena'],
+                        creationflags=0x08000000 if os.name == 'nt' else 0)
                 return self._json({'ok': True, 'id': rec.get('id')})
             if p == '/api/esborra':
                 k = str(json.loads(self._body()).get('id'))
