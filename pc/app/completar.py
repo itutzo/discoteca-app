@@ -908,10 +908,12 @@ def mateix_disc(a1, t1, a2, t2):
 
 def mateix_contingut(a1, d1, a2, d2):
     """El mateix disc amb un títol del tot diferent: a l'Access hi havia «Better Than Ezra» (el nom del grup) i la
-    carpeta del NAS diu «Before The Robots». Mateix artista, mateix any, exactament els mateixos temes (5 o més)
+    carpeta del NAS diu «Before The Robots». Mateix artista (o un nom que comença amb l'altre), mateix any, exactament els mateixos temes (5 o més)
     i només una de les dues entrades té carpeta al NAS: si totes dues en tenen, són dos discos diferents
     (encara que un tingui els temes mal copiats) i no es toquen."""
-    if N(a1) != N(a2) or not N(a1):
+    n1, n2 = N(a1), N(a2)
+    # el mateix artista, o un nom que comença amb l'altre: «Astroqueen» / «Astroqueen Vs Buffalo» (un disc compartit)
+    if not n1 or not n2 or not (n1 == n2 or (min(len(n1), len(n2)) >= 4 and (n1.startswith(n2) or n2.startswith(n1)))):
         return False
     if not str(d1.get('any') or '').strip() or str(d1.get('any')).strip() != str(d2.get('any') or '').strip():
         return False
