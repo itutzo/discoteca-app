@@ -7,6 +7,7 @@
   python completar.py --mode disc --id X un disc concret
   python completar.py --mode discogs     sincronitza CD i vinils amb la teva col·lecció de Discogs
   python completar.py --mode nas         busca discos nous a la carpeta de música
+  python completar.py --mode so          escolta una tanda de discos (mostres d'Apple Music) per als similars
 
 Regles: només omple camps buits, mai no toca la classificació personal ni les notes,
 i marca tot el que afegeix com a «automàtic» perquè ho puguis revisar.
@@ -1457,6 +1458,16 @@ def main():
                 fets += perfil_lastfm(6000 if a.mode == 'perfil' else 600)
             except Exception as e:
                 log(f'Perfil musical: error {e!r}')
+        # el so dels discos (mostres de 30 s d'Apple Music): 300 discos per tanda, com a màxim 90 minuts
+        if a.mode in ('nit', 'tot', 'so', 'disc'):
+            try:
+                import so
+                if a.mode == 'disc':
+                    so.analitza(id_=a.id, estat=estat)
+                else:
+                    so.analitza(a.n, estat=estat)
+            except Exception as e:
+                log(f'So: error {e!r}')
         estat(f'Fet ({a.mode}): {fets} discos amb dades noves en {int((time.time() - t0) / 60)} min · {resum()} · {datetime.datetime.now():%d/%m %H:%M}')
     except Exception as e:
         log(f'ERROR general: {e!r}')
