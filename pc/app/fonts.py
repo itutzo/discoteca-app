@@ -217,7 +217,7 @@ def allmusic(artista, titol):
     out['estils'] = [txt(a) for a in d.select('.styles a')]
     rc = d.select_one('[class*="ratingAllmusic"]')
     m = re.search(r'ratingAllmusic(\d+)', ' '.join(rc.get('class', []))) if rc else None
-    out['amg'] = (str(int(m.group(1)) / 2).replace('.0', '').replace('.', ',') if m and int(m.group(1)) else None)
+    out['amg'] = (str(int(m.group(1)) / 2).replace('.0', '') if m and int(m.group(1)) else None)
     img = d.select_one('img[src*="/front/"]')
     out['caratula'] = img['src'] if img else None
     out['temes'] = [{'n': txt(t.select_one('.trackNum')), 'titol': txt(t.select_one('.title a') or t.select_one('.title')),
