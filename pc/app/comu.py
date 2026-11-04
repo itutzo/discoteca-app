@@ -170,11 +170,34 @@ NUMS = {'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '
         'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5', 'vi': '6', 'vii': '7', 'viii': '8', 'ix': '9', 'x': '10'}
 
 
+# notes d'edició o de format que porten els noms de les carpetes baixades i que no són del títol del disc
+SOROLL = r'remaster|reissue|re-issue|deluxe|edition|expanded|anniversary|bonus|explicit|kbps|\b320\b|\b256\b|\b192\b|flac|mp3|web|rip|vinyl|lossless'
+
+
+def titol_net(t):
+    """«Dag With Shawn (2010)» -> («Dag With Shawn», «2010»); «Can I Say (Reissue)» -> («Can I Say», '').
+    Treu l'any entre parèntesis o claudàtors del final i les notes d'edició o de format."""
+    t, any_ = str(t or '').strip(), ''
+    while True:
+        m = re.search(r'\s*[\(\[]\s*((?:19|20)\d{2})\s*[\)\]]\s*$', t)
+        if m and m.start() > 0:
+            any_ = any_ or m.group(1)
+            t = t[:m.start()].rstrip(' -–—')
+            continue
+        m = re.search(r'\s*[\(\[][^\(\)\[\]]*(?:' + SOROLL + r')[^\(\)\[\]]*[\)\]]\s*$', t, re.I)
+        if m and m.start() > 0:
+            t = t[:m.start()].rstrip(' -–—')
+            continue
+        return t.strip(), any_
+
+
 def NT(s):
-    """Com N() però «Fifteen» = «15» i «IV» = «4», per comparar títols."""
+    """Com N() però «Fifteen» = «15» i «IV» = «4», per comparar títols (sense l'any ni les notes d'edició del final)."""
+    s = titol_net(s)[0] or str(s or '')
     s = unicodedata.normalize('NFD', str(s or '')).encode('ascii', 'ignore').decode().lower()
     s = s.replace('&', ' and ')                 # «Hips & Makers» = «Hips And Makers»
-    s = re.sub(r'[\(\[][^\)\]]*(remaster|deluxe|edition|expanded|anniversary|bonus)[^\)\]]*[\)\]]', '', s)
+    s = re.sub(r'[\(\[][^\)\]]*(remaster|reissue|deluxe|edition|expanded|anniversary|bonus)[^\)\]]*[\)\]]', '', s)
+    s = re.sub(r'[\(\[]\s*(19|20)\d{2}\s*[\)\]]\s*$', '', s)       # «Dag With Shawn (2010)»
     s = ' '.join(NUMS.get(w, w) for w in re.findall(r'[a-z0-9]+', s))
     return N(s)
 

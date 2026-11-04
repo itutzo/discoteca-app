@@ -8,6 +8,7 @@ except ImportError:   # primer cop: s'instal·la sol
     subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', '--quiet', 'beautifulsoup4'])
     from bs4 import BeautifulSoup
 
+import comu
 from comu import N, NT, log
 
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -285,6 +286,9 @@ class Discogs:
         candidats, vist = [], set()
         # «Hips & Makers» a la carpeta i «Hips And Makers» a Discogs (o al revés): es busquen totes dues formes
         titols = [titol]
+        net = comu.titol_net(titol)[0]
+        if net and NT(net) != NT(titol):     # «Dag With Shawn (2010)»: també sense l'any ni les notes d'edició
+            titols.append(net)
         if '&' in titol:
             titols.append(re.sub(r'\s*&\s*', ' And ', titol))
         elif re.search(r'\band\b', titol, re.I):

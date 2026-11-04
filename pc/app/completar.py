@@ -313,6 +313,26 @@ def formata_arxius(d, arrel):
 SENSE_ANY = re.compile(r'^(.+?)\s+[-–—]\s+(.+)$')
 
 
+def neteja_titol_nou(d):
+    """Disc nou encara sense fonts amb el títol tal com venia a la carpeta («Dag With Shawn (2010)», «Can I Say
+    (Reissue)»): el títol queda net, l'any va a la fitxa i es torna a buscar. Només si el títol el va posar el
+    programa (no l'Ignasi). Torna True si l'ha canviat."""
+    if d.get('fonts') or 'titol' not in (d.get('auto') or []):
+        return False
+    net, any_ = comu.titol_net(d.get('titol'))
+    if not net or net == d.get('titol'):
+        return False
+    log(f"  Títol de la carpeta netejat: «{d.get('titol')}» ara és «{net}»" + (f' ({any_})' if any_ else ''))
+    d['titol'] = net
+    if any_ and not d.get('any'):
+        d['any'] = any_
+        d['auto'] = sorted(set(d.get('auto', [])) | {'any'})
+    for k in ('no_trobat', 'proc'):
+        d.pop(k, None)
+    d['reintenta'] = True
+    return True
+
+
 def posa_any_carpeta(d, arrel):
     """Un disc nou copiat tal com venia («'77 - High Decibels», sense l'any): quan la fitxa ja té l'any, la carpeta
     passa a «Artista - Any - Títol» («'77 - 2011 - High Decibels»). L'artista i el títol són els de la carpeta.
@@ -322,7 +342,10 @@ def posa_any_carpeta(d, arrel):
     m = SENSE_ANY.match(c)
     if CARPETA.match(c) or not m or not re.match(r'^\d{4}$', any_) or re.match(r'^\d{4}$', m.group(1).strip()):
         return False
-    art, tit = nom_carpeta(m.group(1)), majuscules(nom_carpeta(m.group(2)))
+    # «Dag With Shawn (2010)» -> «Dag With Shawn» si l'any és el del disc; «MCMLXXXV (1985)» (Rufio, 2003) es queda
+    net, any_p = comu.titol_net(m.group(2))
+    tit = net if net and (not any_p or any_p == any_) else m.group(2)
+    art, tit = nom_carpeta(m.group(1)), majuscules(nom_carpeta(tit))
     nou = f'{art} - {any_} - {tit}'
     if not art or not tit or not os.path.isdir(os.path.join(arrel, c)):
         return False
@@ -498,6 +521,8 @@ def formata_tots():
                 log(f'  NAS: no puc llegir l\'etiqueta dels arxius de «{c}» ({e!r})')
             if v:
                 vells.add(str(v))
+                canvi += 1
+            if neteja_titol_nou(d):
                 canvi += 1
             if posa_artista_carpeta(d, arrel, artistes) or posa_any_carpeta(d, arrel):
                 mtimes[d['carpeta']] = mtimes.pop(c)
@@ -1746,6 +1771,10 @@ def llegeix_nas():
             continue
         m = re.match(r'^(.+?)\s*[-–—]\s*(\d{4})\s*[-–—]\s*(.+)$', e.name) or re.match(r'^(.+?)\s*[-–—]\s*()(.+)$', e.name)
         art, any_, tit = (m.group(1).strip(), m.group(2), m.group(3).strip()) if m else (e.name, '', e.name)
+        # «Dag Nasty - Dag With Shawn (2010)»: l'any va a la fitxa i el títol queda net
+        net, any_p = comu.titol_net(tit)
+        if net and m:
+            tit, any_ = net, any_ or any_p
         sup = sorted({EXT[os.path.splitext(f)[1].lower()] for _, f in arxius})
         # carpeta reanomenada? el disc antic passa a apuntar a la nova i agafa els noms corregits
         vell = next((x for x in orfes if mateix_disc(artistes.get(str(x['artista']), ''), x.get('titol'), art, tit)), None) \
