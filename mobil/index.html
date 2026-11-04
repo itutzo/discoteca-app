@@ -480,6 +480,9 @@ function buildSim(){
   simIdx = {byPerson, byArtist};
 }
 const num = v => parseFloat(String(v??'').replace(',','.')) || 0;
+// notes (la meva i la d'AllMusic): sempre amb punt decimal, encara que s'escrigui amb coma (7,5 → 7.5)
+const NOTES_NUM = ['classificacio', 'clasamg'];
+const decimal = v => v == null ? v : String(v).trim().replace(/^(\d*),(\d+)$/, '$1.$2');
 const yearSim = (a,b) => (+a && +b) ? Math.max(0, 1 - Math.abs(a-b)/12) : 0;
 // Afinitat entre artistes segons internet (es carrega en segon pla): els artistes similars que donen Last.fm,
 // Apple Music, AllMusic i Discogs per a aquest artista, i les etiquetes d'estil de Last.fm («hard rock», «jazz fusion»...).
@@ -631,7 +634,7 @@ function filtered(){
 function cardHTML(d){
   return `<button class="card" type="button" data-open="${esc(d.id)}">${sleeveHTML(d,false)}
     <span class="t">${esc(d.titol||'(sense títol)')}</span><span class="a">${esc(artName(d.artista))}</span>
-    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.classificacio?`<span>★ ${esc(d.classificacio)}</span>`:''}</span></button>`;
+    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.classificacio?`<span>★ ${esc(decimal(d.classificacio))}</span>`:''}</span></button>`;
 }
 function render(){
   const list = filtered();
@@ -671,8 +674,8 @@ function renderSheet(){
         <button class="who" type="button" data-artist="${esc(d.artista)}">${esc(artName(d.artista))}</button>
         <button class="btn ghost" type="button" data-info="${esc(artName(d.artista))}" style="margin-left:6px;padding:4px 10px">Biografia i discografia</button>
         <div class="score">
-          <div><b>${d.classificacio?esc(d.classificacio):'—'}</b><span>La meva nota</span></div>
-          ${d.clasamg && d.clasamg!=='sin'?`<div><b>${esc(d.clasamg)}</b><span>AllMusic</span></div>`:''}
+          <div><b>${d.classificacio?esc(decimal(d.classificacio)):'—'}</b><span>La meva nota</span></div>
+          ${d.clasamg && d.clasamg!=='sin'?`<div><b>${esc(decimal(d.clasamg))}</b><span>AllMusic</span></div>`:''}
           ${d.any?`<div><b>${esc(d.any)}</b><span>Any</span></div>`:''}
         </div>
         <dl class="facts">
@@ -902,7 +905,7 @@ function renderForm(){
       <div class="wide notice">Per a un CD o vinil, n'hi ha prou amb el <b>codi de barres</b> o el <b>número de catàleg</b>. El disc queda «pendent de completar» i s'omple sol amb les dades de Discogs i AllMusic.
         <div class="scan"><label class="btn" for="e_scan">Llegeix el codi d'una foto</label><input id="e_scan" type="file" accept="image/*" capture="environment" hidden><span id="scanMsg"></span></div></div>
       <fieldset class="wide sups"><legend>Suports que tens</legend>${SUPS.map(([k,l])=>`<label><input type="checkbox" id="s_${k}" ${supList(d).includes(k)?'checked':''}> ${l}</label>`).join('')}</fieldset>
-      ${FIELDS.map(([k,l,w])=>{ const sg = suggeriments(k); return `<label class="${w||''}">${l}<input id="e_${k}" value="${esc(d[k]??'')}" autocomplete="off" ${k==='data'?'type="date"':''} ${sg?`list="ll_${k}"`:''}>${sg?`<datalist id="ll_${k}">${sg.map(x=>`<option value="${esc(x)}">`).join('')}</datalist>`:''}</label>`; }).join('')}
+      ${FIELDS.map(([k,l,w])=>{ const sg = suggeriments(k); return `<label class="${w||''}">${l}<input id="e_${k}" value="${esc((NOTES_NUM.includes(k) ? decimal(d[k]) : d[k])??'')}" autocomplete="off" ${k==='data'?'type="date"':''} ${NOTES_NUM.includes(k)?'inputmode="decimal"':''} ${sg?`list="ll_${k}"`:''}>${sg?`<datalist id="ll_${k}">${sg.map(x=>`<option value="${esc(x)}">`).join('')}</datalist>`:''}</label>`; }).join('')}
       <label class="wide" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="e_pend" style="width:auto" ${(d.estat==='pendent'||!current)?'checked':''}> Pendent de completar automàticament</label>
       <div class="wide"><h3 class="sec">Caràtula</h3>
         <div class="coveredit">${sleeveHTML(d,true)}
@@ -986,7 +989,7 @@ async function onSave(e){
       var reanomenat = true;
     }
     const rec = {artista: String(artista)};
-    for(const [k] of FIELDS){ let v = $('#e_'+k).value.trim(); if(k==='qualitat') v = QUALITAT_CA[v.toLowerCase()] || v; rec[k] = v || null; }
+    for(const [k] of FIELDS){ let v = $('#e_'+k).value.trim(); if(k==='qualitat') v = QUALITAT_CA[v.toLowerCase()] || v; if(NOTES_NUM.includes(k)) v = decimal(v); rec[k] = v || null; }
     const known = SUPS.map(x=>x[0]); const extra = current ? supList(current).filter(s=>!known.includes(s)) : [];
     rec.suport = [...SUPS.filter(([k])=>$('#s_'+k).checked).map(x=>x[0]), ...extra].join(', ') || null;
     rec.temes = readRows('#rowsT',3).map((x,i)=>[x[0]||String(i+1), x[1], x[2], '', 0, 0]);

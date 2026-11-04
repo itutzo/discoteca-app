@@ -1237,6 +1237,36 @@ def tradueix_catala():
             log(f'Català: {n} textos de les entrades traduïts')
 
 
+NOTES_NUM = ('classificacio', 'clasamg')
+
+
+def decimal(v):
+    """«7,5» → «7.5»: les notes sempre amb punt decimal. Només toca els números escrits amb coma."""
+    if isinstance(v, str) and re.fullmatch(r'\s*\d*,\d+\s*', v):
+        return v.strip().replace(',', '.')
+    return v
+
+
+def normalitza_notes():
+    """Posa el punt decimal a la meva nota i a la d'AllMusic (també a les que arribin del mòbil).
+    El primer cop guarda una còpia de discs.json a dades\\copies\\notes-punt-discs-abans.json."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n = 0
+        for d in discs:
+            for camp in NOTES_NUM:
+                nou = decimal(d.get(camp))
+                if nou != d.get(camp):
+                    d[camp] = nou
+                    n += 1
+        if n:
+            copia = os.path.join(comu.COPIES, 'notes-punt-discs-abans.json')
+            if not os.path.exists(copia):
+                shutil.copy2(os.path.join(comu.DADES, 'discs.json'), copia)
+            desa('discs.json', discs)
+            log(f'Notes: {n} notes passades a punt decimal')
+
+
 def tanda(mode, n, id_=None):
     artistes = llegeix('artistes.json', {})
     discs = llegeix('discs.json', [])
@@ -1998,6 +2028,10 @@ def main():
         tradueix_catala()
     except Exception as e:
         log(f'Català: error {e!r}')
+    try:
+        normalitza_notes()
+    except Exception as e:
+        log(f'Notes: error {e!r}')
     try:
         unifica_variables()
     except Exception as e:
