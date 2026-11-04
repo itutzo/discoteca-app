@@ -307,8 +307,39 @@ def formata_arxius(d, arrel):
     return -1 if errors else canviats
 
 
+SENSE_ANY = re.compile(r'^(.+?)\s+[-–—]\s+(.+)$')
+
+
+def posa_any_carpeta(d, arrel):
+    """Un disc nou copiat tal com venia («'77 - High Decibels», sense l'any): quan la fitxa ja té l'any, la carpeta
+    passa a «Artista - Any - Títol» («'77 - 2011 - High Decibels»). L'artista i el títol són els de la carpeta.
+    Torna True si l'ha reanomenada."""
+    c = d.get('carpeta') or ''
+    any_ = str(d.get('any') or '').strip()
+    m = SENSE_ANY.match(c)
+    if CARPETA.match(c) or not m or not re.match(r'^\d{4}$', any_) or re.match(r'^\d{4}$', m.group(1).strip()):
+        return False
+    art, tit = nom_carpeta(m.group(1)), majuscules(nom_carpeta(m.group(2)))
+    nou = f'{art} - {any_} - {tit}'
+    if not art or not tit or not os.path.isdir(os.path.join(arrel, c)):
+        return False
+    if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
+        log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+        return False
+    try:
+        os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+    except OSError as e:
+        log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+        return False
+    d['carpeta'] = nou
+    d.pop('fmt_m', None)
+    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (hi faltava l\'any)')
+    return True
+
+
 def formata_tots():
-    """Cada vegada: els arxius de les carpetes noves o canviades passen al format «Artista - Disc - 01 - Cançó».
+    """Cada vegada: les carpetes sense l'any passen a «Artista - Any - Títol» (si la fitxa ja té l'any), i els
+    arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
     Si els temes de la fitxa són els que es van treure dels noms dels arxius, es tornen a llegir."""
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
     if not os.path.isdir(arrel):
@@ -317,6 +348,11 @@ def formata_tots():
         discs = llegeix('discs.json', [])
         mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
         canvi = total = 0
+        for d in discs:
+            c = d.get('carpeta')
+            if c in mtimes and not CARPETA.match(c) and posa_any_carpeta(d, arrel):
+                mtimes[d['carpeta']] = mtimes.pop(c)
+                canvi += 1
         for d in discs:
             c = d.get('carpeta')
             # fmt_v 2: també els discos dobles («Disc 2»); les carpetes ja repassades es tornen a mirar un cop
@@ -1847,6 +1883,11 @@ def main():
         fets = 0
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)
+            # els discos nous ja tenen l'any: la carpeta passa a «Artista - Any - Títol» i els arxius, al format
+            try:
+                formata_tots()
+            except Exception as e:
+                log(f'NAS: error posant el format als arxius {e!r}')
         if a.mode in ('nit', 'tot', 'perfil'):
             try:
                 fets += perfil_lastfm(6000 if a.mode == 'perfil' else 600)
