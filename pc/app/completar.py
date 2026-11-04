@@ -85,7 +85,10 @@ def id_artista(nom, artistes):
     for k, v in artistes.items():
         if N(v) == N(nom):
             return k
-    k = 'a' + str(int(time.time() * 1000))
+    t = int(time.time() * 1000)
+    while 'a' + str(t) in artistes:      # dos artistes nous en el mateix mil·lisegon
+        t += 1
+    k = 'a' + str(t)
     artistes[k] = nom
     desa('artistes.json', artistes)
     return k
@@ -337,6 +340,140 @@ def posa_any_carpeta(d, arrel):
     return True
 
 
+def _text_id3(b):
+    """Text d'un marc ID3v2 (el primer octet diu la codificació)."""
+    if not b:
+        return ''
+    enc, b = b[0], b[1:]
+    try:
+        t = b.decode({0: 'latin-1', 1: 'utf-16', 2: 'utf-16-be', 3: 'utf-8'}.get(enc, 'latin-1'), 'replace')
+    except (LookupError, UnicodeError):
+        return ''
+    return t.split('\x00')[0].strip()
+
+
+def etiqueta_mp3(ruta):
+    """L'artista, el disc i l'any que porta l'etiqueta ID3 d'un MP3 que ja és al PC. Només es llegeix l'etiqueta
+    (uns pocs kB al principi o els 128 octets del final; la caràtula se salta): mai l'àudio, i res si l'arxiu és
+    «a demanda». Torna {'artista', 'disc', 'any'} (els que hi hagi)."""
+    st = os.stat(ruta)
+    if getattr(st, 'st_file_attributes', 0) & NO_LOCAL:
+        return {}
+    out = {}
+    with open(ruta, 'rb') as f:
+        cap = f.read(10)
+        if cap[:3] == b'ID3' and len(cap) == 10:
+            ver = cap[3]
+            fi = 10 + (cap[6] << 21 | cap[7] << 14 | cap[8] << 7 | cap[9])
+            llarg_id, llarg_cap = (3, 6) if ver == 2 else (4, 10)
+            noms = {'TP1': 'artista', 'TP2': 'artista2', 'TAL': 'disc', 'TYE': 'any'} if ver == 2 else \
+                {'TPE1': 'artista', 'TPE2': 'artista2', 'TALB': 'disc', 'TYER': 'any', 'TDRC': 'any'}
+            pos = 10
+            while pos + llarg_cap <= fi and len(out) < 4:
+                f.seek(pos)
+                h = f.read(llarg_cap)
+                if len(h) < llarg_cap or not h[:llarg_id].strip(b'\x00'):
+                    break
+                fid = h[:llarg_id].decode('latin-1')
+                n = int.from_bytes(h[llarg_id:llarg_id + (3 if ver == 2 else 4)], 'big')
+                if ver == 4:
+                    n = h[4] << 21 | h[5] << 14 | h[6] << 7 | h[7]
+                if n <= 0 or pos + llarg_cap + n > fi:
+                    break
+                if fid in noms and n < 4096:
+                    t = _text_id3(f.read(n))
+                    if t:
+                        out.setdefault(noms[fid], t)
+                pos += llarg_cap + n                    # els marcs grossos (la caràtula) no es llegeixen
+        if not out.get('artista') and not out.get('artista2') and st.st_size > 128:
+            f.seek(-128, 2)
+            v1 = f.read(128)
+            if v1[:3] == b'TAG':
+                txt = lambda b: b.split(b'\x00')[0].decode('latin-1').strip()
+                out = {'disc': txt(v1[63:93]), 'artista': txt(v1[33:63]), 'any': txt(v1[93:97])}
+    art = out.get('artista2') or out.get('artista') or ''
+    if '/' in art or ';' in art:
+        art = out.get('artista2') or re.split(r'\s*[/;]\s*', art)[0]
+    res = {'artista': art.strip(), 'disc': out.get('disc', '').strip()}
+    m = re.match(r'^(\d{4})', out.get('any', '').strip())
+    if m:
+        res['any'] = m.group(1)
+    return {k: v for k, v in res.items() if v}
+
+
+def sense_artista(c):
+    """La carpeta no porta l'artista: «2009 - Cycle of Pain» o «In the Red». Torna (any, títol) o None."""
+    m = SENSE_ANY.match(c or '')
+    if m and re.match(r'^\d{4}$', m.group(1).strip()):
+        return m.group(1).strip(), m.group(2).strip()
+    if not m and not CARPETA.match(c or ''):
+        return '', (c or '').strip()
+    return None
+
+
+def artista_de_etiquetes(d, arrel, artistes):
+    """Disc nou amb una carpeta sense l'artista: l'artista es treu de l'etiqueta dels MP3 (si ja són al PC), es
+    torna a completar amb l'artista bo i la carpeta passarà a «Artista - Any - Títol». Torna True si l'ha canviat."""
+    c = d.get('carpeta') or ''
+    sa = sense_artista(c)
+    nom = artistes.get(str(d.get('artista')), '')
+    # només si l'artista de la fitxa és el que es va treure del nom de la carpeta (l'any o la carpeta sencera) i
+    # encara no s'ha trobat a cap font d'internet (els recopilatoris «Varios» ja tenen fonts i no es toquen)
+    if not sa or d.get('art_id3') or d.get('fonts') or N(nom) not in (N(sa[0]), N(c)):
+        return False
+    ruta = os.path.join(arrel, c)
+    try:
+        mp3 = sorted(os.path.join(r, f) for r, _, fs in os.walk(ruta) for f in fs if f.lower().endswith('.mp3'))
+        et = {}
+        for a in mp3[:3]:
+            et = etiqueta_mp3(a)
+            if et.get('artista'):
+                break
+    except OSError:
+        return False
+    art = majuscules(nom_carpeta(et.get('artista', '')))
+    if not art or N(art) in (N(nom), N(sa[0])) or re.match(r'^\d{4}$', art):
+        return False
+    vell = d.get('artista')
+    d['artista'] = id_artista(art, artistes)
+    d['art_id3'] = True
+    if sa[0] and not d.get('any'):
+        d['any'] = sa[0]
+    elif et.get('any') and not d.get('any'):
+        d['any'] = et['any']
+        d['auto'] = sorted(set(d.get('auto', [])) | {'any'})
+    if not sa[0] and et.get('disc') and N(d.get('titol')) == N(c):
+        d['titol'] = majuscules(et['disc'])
+    for k in ('no_trobat', 'proc'):
+        d.pop(k, None)
+    d['reintenta'] = True
+    log(f'  NAS: la carpeta «{c}» no porta l\'artista; segons els arxius és «{art}»')
+    return vell
+
+
+def posa_artista_carpeta(d, arrel, artistes):
+    """Carpeta sense l'artista, amb l'artista ja tret dels arxius i l'any a la fitxa: «Artista - Any - Títol»."""
+    c = d.get('carpeta') or ''
+    sa = sense_artista(c)
+    any_ = str(d.get('any') or '').strip()
+    art = nom_carpeta(artistes.get(str(d.get('artista')), ''))
+    if not sa or not d.get('art_id3') or not art or not re.match(r'^\d{4}$', any_):
+        return False
+    nou = f"{art} - {any_} - {majuscules(nom_carpeta(sa[1] if sa[0] else d.get('titol') or sa[1]))}"
+    if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
+        log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+        return False
+    try:
+        os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+    except OSError as e:
+        log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+        return False
+    d['carpeta'] = nou
+    d.pop('fmt_m', None)
+    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (hi faltava l\'artista)')
+    return True
+
+
 def formata_tots():
     """Cada vegada: les carpetes sense l'any passen a «Artista - Any - Títol» (si la fitxa ja té l'any), i els
     arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
@@ -348,11 +485,30 @@ def formata_tots():
         discs = llegeix('discs.json', [])
         mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
         canvi = total = 0
+        artistes = llegeix('artistes.json', {})
+        vells = set()
         for d in discs:
             c = d.get('carpeta')
-            if c in mtimes and not CARPETA.match(c) and posa_any_carpeta(d, arrel):
+            if c not in mtimes or CARPETA.match(c):
+                continue
+            try:
+                v = artista_de_etiquetes(d, arrel, artistes)
+            except Exception as e:
+                v = False
+                log(f'  NAS: no puc llegir l\'etiqueta dels arxius de «{c}» ({e!r})')
+            if v:
+                vells.add(str(v))
+                canvi += 1
+            if posa_artista_carpeta(d, arrel, artistes) or posa_any_carpeta(d, arrel):
                 mtimes[d['carpeta']] = mtimes.pop(c)
                 canvi += 1
+        # l'artista equivocat («2009») sense cap altre disc: fora
+        orfes = vells - {str(d.get('artista')) for d in discs}
+        if orfes:
+            for k in orfes:
+                artistes.pop(k, None)
+        if vells:
+            desa('artistes.json', artistes)
         for d in discs:
             c = d.get('carpeta')
             # fmt_v 2: també els discos dobles («Disc 2»); les carpetes ja repassades es tornen a mirar un cop
