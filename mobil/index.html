@@ -726,9 +726,10 @@ async function loadDiscover(d){
   const haveD = new Set(discs.map(x=>tok2(artName(x.artista))+'|'+tok2(x.titol)));
   const sc = x => x.score ?? (x.fonts?.length||0);
   const rank = L => [...L].map((x,i)=>[x,i]).sort((a,b)=>sc(b[0])-sc(a[0]) || a[1]-b[1]).map(x=>x[0]);
-  const A = rank(r.artistes||[]).filter(x=>!have.has(tok2(x.nom))).slice(0,5);
+  const J = jaTinc();
+  const A = rank(r.artistes||[]).filter(x=>!have.has(tok2(x.nom)) && !J.artista(x.nom)).slice(0,5);
   const seen = new Set();
-  const D = rank(r.discos||[]).filter(x=>tok2(x.artista) && !have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
+  const D = rank(r.discos||[]).filter(x=>tok2(x.artista) && !have.has(tok2(x.artista)) && !haveD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !J.disc(x.artista, x.titol) && !igD.has(tok2(x.artista)+'|'+tok2(x.titol)) && !seen.has(tok2(x.artista)) && seen.add(tok2(x.artista))).slice(0,5);
   box.innerHTML = (A.length?`<h3 class="sec">Per descobrir · artistes</h3><ul class="disc">${A.map(x=>`<li><a href="${enllacFont(x)}" target="_blank" rel="noopener">${esc(x.nom)}</a>${chipsFont(x)}<button class="ign" type="button" data-ign="artistes" data-clau="${esc(tok2(x.nom))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'')
     + (D.length?`<h3 class="sec">Per descobrir · discos</h3><ul class="disc">${D.map(x=>`<li><a href="${enllacFont(x)}" target="_blank" rel="noopener">${esc(x.titol)}</a> <span class="who2">${esc(x.artista)}${x.any?' · '+esc(x.any):''}</span>${chipsFont(x)}<button class="ign" type="button" data-ign="discos" data-clau="${esc(tok2(x.artista)+'|'+tok2(x.titol))}" title="No m'interessa: no me'l tornis a proposar">✕</button></li>`).join('')}</ul>`:'');
 }
@@ -796,6 +797,8 @@ async function calculaRecs(){
   const tinc = new Set(Object.values({...artistes, ...newArtists}).map(tok2));
   const igA = new Set(ig.artistes), igD = new Set(ig.discos);
   const cand = new Map(), candD = new Map();
+  const J = jaTinc();
+  Object.values(R || {}).forEach(r => (r?.discos||[]).forEach(x => J.disc(x.artista, x.titol)));   // primer aprèn els noms alternatius
   let base = 0;
   for(const [aid, r] of Object.entries(R || {})){
     const A = perArt.get(String(aid)); if(!A || !r) continue; base++;
@@ -808,10 +811,10 @@ async function calculaRecs(){
       c.urls = {...(x.urls||{}), ...(c.urls||{})};
       M.set(k, c);
     };
-    (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k)) suma(cand, k, x, i, {nom:x.nom}); });
+    (r.artistes||[]).forEach((x, i) => { const k = tok2(x.nom); if(k && !tinc.has(k) && !igA.has(k) && !J.artista(x.nom)) suma(cand, k, x, i, {nom:x.nom}); });
     (r.discos||[]).forEach((x, i) => {
       const ka = tok2(x.artista), k = ka + '|' + tok2(x.titol);
-      if(ka && !tinc.has(ka) && !igA.has(ka) && !igD.has(k)) suma(candD, k, x, i, {artista:x.artista, titol:x.titol, any:x.any});
+      if(ka && !tinc.has(ka) && !igA.has(ka) && !igD.has(k) && !J.disc(x.artista, x.titol)) suma(candD, k, x, i, {artista:x.artista, titol:x.titol, any:x.any});
     });
   }
   const dec = new Map(I.decades);
@@ -868,6 +871,44 @@ async function ignora(tipus, clau){
   toast('D\'acord, no te\'l tornaré a proposar');
 }
 const tok2 = s => norm(s).replace(/^the\s+|,\s*the$/,'').replace(/[^a-z0-9]/g,'');
+// «Ja el tinc?»: compara noms d'artista i títols de manera tolerant («&» = «and», sense «The», sense notes
+// d'edició entre parèntesis, «A / B», «feat.», «& The Band»…), perquè no es recomanin discos que ja són a la discoteca.
+const clau = s => norm(s).replace(/[’‘`´]/g, "'").replace(/\s*[(\[][^)\]]*[)\]]/g, ' ').replace(/\s*[&+]\s*/g, ' and ')
+  .replace(/^the\s+|,\s*the\s*$/g, '').replace(/\bthe\b|\bth'/g, ' ').replace(/[^a-z0-9]/g, '');
+const ENLLAC = /^(and|y|e|i|band|group|trio|quartet|project|experience|feat|ft|featuring|with)$/;
+// «A / B» i «A feat. B» sempre; «A, B» només si els noms tenen dues paraules o més («Earth, Wind & Fire» no és «Earth»)
+const dues = s => norm(s).replace(/^the\s+/, '').trim().split(/\s+/).length >= 2;
+const parts = s => String(s ?? '').split(/\s*\/\s*|\s+(?:feat\.?|ft\.?|featuring|with)\s+/i)
+  .flatMap(p => { const c = p.split(/,\s+(?!the\s*$)/i); return c.length > 1 && c.every(dues) ? [p, ...c] : [p]; }).filter(Boolean);
+// «Stevie Ray Vaughan & Double Trouble» → també «Stevie Ray Vaughan»; «Kenny Wayne Shepherd Band» → «Kenny Wayne Shepherd»
+const arrels = s => { const w = norm(s).replace(/\s*[&+]\s*/g, ' and ').replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(x => x && x !== 'the'), r = [];
+  for(let i = 2; i < w.length; i++) if(ENLLAC.test(w[i])) r.push(clau(w.slice(0, i).join(' ')));   // dues paraules o més: «Iron and Wine» no és «Iron»
+  return r.filter(k => k.length >= 3); };
+const semblant = (a, b) => {
+  if(a === b) return true;
+  if(Math.min(a.length, b.length) >= 4 && (a.includes(b) || b.includes(a))) return true;
+  if(Math.abs(a.length - b.length) > 3 || Math.max(a.length, b.length) < 6) return false;
+  let p = Array.from({length: b.length + 1}, (_, j) => j);
+  for(let i = 1; i <= a.length; i++){ const q = [i]; for(let j = 1; j <= b.length; j++) q[j] = Math.min(p[j] + 1, q[j-1] + 1, p[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); p = q; }
+  return p[b.length] / Math.max(a.length, b.length) <= 0.2;
+};
+let tincCache = null;
+function jaTinc(){
+  const noms = Object.values({...artistes, ...newArtists}), sig = noms.length + '|' + discs.length;
+  if(tincCache?.sig === sig && tincCache.d === discs) return tincCache;
+  const T = new Set(noms.map(clau).filter(Boolean)), TP = new Set(noms.flatMap(arrels)), titols = new Map();
+  for(const d of discs){ const t = clau(d.titol); if(!t) continue; const a = clau(artName(d.artista)); (titols.get(t) || titols.set(t, new Set()).get(t)).add(a); }
+  const alias = new Set();   // artistes que ja tens amb un altre nom («Built to Spill» = «Built To Spilt»), vistos pels títols
+  const artista = nom => { const P = parts(nom), K = [nom, ...P].map(clau).filter(Boolean);
+    return K.some(k => T.has(k) || TP.has(k) || alias.has(k)) || [nom, ...P].flatMap(arrels).some(k => T.has(k)); };
+  const disc = (nom, titol) => { if(artista(nom)) return true;
+    const A = titols.get(clau(titol)); if(!A) return false;
+    const K = [nom, ...parts(nom)].map(clau).filter(Boolean);
+    const si = [...A].some(a => K.some(k => semblant(a, k)));
+    if(si) alias.add(clau(nom));
+    return si; };
+  return tincCache = {sig, d: discs, artista, disc};
+}
 
 function rowT(x=['', '', '']){ return `<div class="r"><input aria-label="Núm." value="${esc(x[0])}"><input aria-label="Tema" value="${esc(x[1])}"><input aria-label="Compositor" value="${esc(x[2])}"><button class="btn ghost" type="button" data-del-row aria-label="Treu">×</button></div>`; }
 function rowP(x=['', '']){ return `<div class="r"><input aria-label="Nom" value="${esc(x[0])}"><input aria-label="Instrument" value="${esc(x[1])}"><button class="btn ghost" type="button" data-del-row aria-label="Treu">×</button></div>`; }
