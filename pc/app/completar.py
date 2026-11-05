@@ -502,6 +502,99 @@ def posa_artista_carpeta(d, arrel, artistes):
     return True
 
 
+CONFLICTE = re.compile(r'_(?:Case)?Conflict|\(Conflict', re.I)
+
+
+def copies_arxius(d, arrel):
+    """Arxius repetits dins de la carpeta d'un disc: el mateix tema dues vegades amb noms diferents
+    («The Mighty Short Bus - Rogue Nation - 01 - Fire.mp3» i «Mighty Short Bus, The - Rogue Nation - 01 - Fire.mp3»).
+    Passa quan el Synology Drive torna a crear l'arxiu amb el nom d'abans d'un canvi de nom (05/11/2026), o en fa
+    una còpia de conflicte («..._CaseConflict.mp3»). Només són còpies si tenen la mateixa mida i el mateix número
+    de pista, i la mateixa data (o una és còpia de conflicte); es queda el que ja té el format bo. No s'obre cap
+    arxiu. Torna [(ruta de la còpia, ruta de la que es queda)]."""
+    c = d.get('carpeta')
+    m = CARPETA.match(c or '')
+    ruta = os.path.join(arrel, c or '')
+    if not m or not os.path.isdir(ruta):
+        return []
+    art, tit = m.group(1).strip(), m.group(3).strip()
+    discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
+             if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
+    out = []
+    for root, _, files in os.walk(ruta):
+        sub = os.path.relpath(root, ruta)
+        mc = re.search(r'(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b', sub, re.I) if sub != '.' else None
+        grups = {}
+        for f in files:
+            if os.path.splitext(f)[1].lower() not in EXT:
+                continue
+            try:
+                st = os.stat(os.path.join(root, f))
+            except OSError:
+                continue
+            if st.st_size:
+                grups.setdefault((st.st_size, os.path.splitext(f)[1].lower()), []).append((f, st.st_mtime))
+        for (_, ext), fs in grups.items():
+            if len(fs) < 2:
+                continue
+            noms = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs) for f, _ in fs}
+            if any(not x for x in noms.values()) or len({x[0] for x in noms.values()}) != 1:
+                continue        # no és clar que siguin el mateix tema: no es toca
+            bons = [f for f, _ in fs if f == noms[f][1] + os.path.splitext(f)[1]]
+            if len(bons) != 1:
+                bons = [f for f, _ in fs if not CONFLICTE.search(f)]
+            if len(bons) != 1:
+                continue
+            bo = bons[0]
+            mt = dict(fs)[bo]
+            for f, t in fs:
+                if f != bo and (abs(t - mt) <= 2 or CONFLICTE.search(f)):
+                    out.append((os.path.join(root, f), os.path.join(root, bo)))
+    return out
+
+
+def treu_copies_arxius(discs, arrel, mtimes):
+    """Norma de l'Ignasi (05/11/2026): tot el que està repetit al NAS es mou a «Mi Musica\\.Paperera duplicats <data>»
+    (no s'esborra; ell la revisa abans d'esborrar-la), amb un registre a dades/duplicats_moguts_<data>.txt.
+    Només les carpetes que han canviat des de l'última vegada (camp dup_m). Cal que el NAS estigui connectat."""
+    paperera = os.path.join(arrel, f'.Paperera duplicats {AVUI}')
+    moguts = canvi = 0
+    for d in discs:
+        c = d.get('carpeta')
+        if c not in mtimes or d.get('dup_m') == mtimes[c] or not CARPETA.match(c):
+            continue
+        n = 0
+        for f, bo in copies_arxius(d, arrel):
+            desti = os.path.join(paperera, os.path.relpath(f, arrel))
+            try:
+                os.makedirs(os.path.dirname(desti), exist_ok=True)
+                if os.path.exists(desti):
+                    b, e = os.path.splitext(desti)
+                    desti = f'{b} ({int(time.time())}){e}'
+                os.rename(f, desti)
+            except OSError as e:
+                log(f'  NAS: ara no puc moure la còpia «{os.path.relpath(f, arrel)}» ({e}); s\'hi tornarà a provar')
+                n = -1
+                break
+            n += 1
+            try:
+                with open(os.path.join(comu.DADES, f'duplicats_moguts_{AVUI}.txt'), 'a', encoding='utf-8') as r:
+                    r.write(f'{datetime.datetime.now():%H:%M:%S}\tarxiu repetit\t{os.path.relpath(f, arrel)}'
+                            f'\t-> {os.path.relpath(desti, arrel)}\t(es queda «{os.path.basename(bo)}»)\n')
+            except OSError:
+                pass
+        if n > 0:
+            log(f'  NAS: {n} arxius repetits de «{c}» moguts a «.Paperera duplicats {AVUI}»')
+            mtimes[c] = os.stat(os.path.join(arrel, c)).st_mtime
+            moguts += n
+        if n >= 0:
+            d['dup_m'] = mtimes[c]
+            canvi += 1
+    if moguts:
+        log(f'NAS: {moguts} arxius repetits moguts a «Mi Musica\\.Paperera duplicats {AVUI}»')
+    return canvi
+
+
 def formata_tots():
     """Cada vegada: les carpetes sense l'any passen a «Artista - Any - Títol» (si la fitxa ja té l'any), i els
     arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
@@ -513,6 +606,11 @@ def formata_tots():
         discs = llegeix('discs.json', [])
         mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
         canvi = total = 0
+        # primer, els arxius repetits (el mateix tema amb dos noms): si no, la carpeta no es pot formatar
+        try:
+            canvi += treu_copies_arxius(discs, arrel, mtimes)
+        except Exception as e:
+            log(f'  NAS: error buscant arxius repetits {e!r}')
         artistes = llegeix('artistes.json', {})
         vells = set()
         for d in discs:
