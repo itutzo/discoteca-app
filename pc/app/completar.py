@@ -145,6 +145,11 @@ def reanomena_carpeta(d, titol_vell=None, artistes=None):
         for k in ('carpeta_nova', 'arxius_pendents', 'reanomena_nas'):
             d.pop(k, None)
         return
+    if not comu.nas_connectat():
+        # sense connexió amb el NAS no es canvia cap nom (el Synology Drive els doblaria): s'hi torna a provar després
+        if not d.get('reanomena_nas'):
+            d['carpeta_nova'] = d.get('carpeta_nova') or True
+        return
     a_ma = d.get('reanomena_nas')
     art_vell = art_nou = m.group(1).strip()
     if a_ma:
@@ -502,8 +507,8 @@ def formata_tots():
     arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
     Si els temes de la fitxa són els que es van treure dels noms dels arxius, es tornen a llegir."""
     arrel = CFG.get('carpeta_musica', r'C:\SynologyMusic\Mi Musica')
-    if not os.path.isdir(arrel):
-        return
+    if not os.path.isdir(arrel) or not comu.nas_connectat():
+        return          # sense connexió amb el NAS, els noms es canvien la propera vegada
     with comu.BLOC:
         discs = llegeix('discs.json', [])
         mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
