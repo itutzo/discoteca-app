@@ -29,6 +29,9 @@ lastfm_key =
 # Carpeta de música del NAS
 carpeta_musica = C:\\SynologyMusic\\Mi Musica
 
+# Adreça del NAS a casa (per no canviar noms d'arxius quan no hi ha connexió). Si es deixa buida, es busca sola
+nas_adreca =
+
 # Quants discos completa cada vegada
 discos_per_tanda = 100
 """
@@ -153,6 +156,87 @@ def log(text):
         pass
     with open(REGISTRE, 'a', encoding='utf-8') as f:
         f.write(linia + '\n')
+
+
+# --- el NAS (Synology Drive) hi és? ---------------------------------------------------------------
+# Si es reanomenen carpetes o arxius de «Mi Musica» mentre el Synology Drive no té connexió amb el NAS, el canvi
+# només es fa al PC i, quan torna la connexió, el client es queda amb els dos noms (carpetes repetides i còpies
+# «..._CaseConflict.mp3», com el 04/11/2026). Abans de canviar cap nom es comprova que el NAS respon.
+SYNO = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'SynologyDrive')
+_IP_LOCAL = re.compile(r'\b((?:192\.168|10)\.\d{1,3}\.\d{1,3}(?:\.\d{1,3})?|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):(\d{2,5})\b')
+_ERR_SYNO = re.compile(r'Fail to open channel|error while connecting|I/O error', re.I)
+_nas = {'t': 0, 'ok': True, 'avis': False}
+
+
+def _cua(ruta, n=65536):
+    """Les últimes línies d'un arxiu de text (sense llegir-lo sencer)."""
+    try:
+        with open(ruta, 'rb') as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - n))
+            return f.read().decode('utf-8', 'replace').splitlines()
+    except OSError:
+        return []
+
+
+def adreca_nas():
+    """L'adreça del NAS a la xarxa de casa: «nas_adreca = 192.168.0.27:6690» al config.ini o, si no hi és,
+    la que fa servir el Synology Drive (la seva base de dades o el seu registre). None si no se sap."""
+    a = str(config().get('nas_adreca', '') or '').strip()
+    if a:
+        h, _, p = a.partition(':')
+        return h, int(p or 6690)
+    try:
+        import sqlite3, tempfile
+        db = os.path.join(SYNO, 'data', 'db', 'sys.sqlite')
+        if os.path.exists(db):
+            tmp = os.path.join(tempfile.gettempdir(), 'discoteca-syno-sys.sqlite')
+            shutil.copyfile(db, tmp)          # una còpia: el Synology Drive té l'original obert
+            con = sqlite3.connect(tmp)
+            try:
+                for ip, port in con.execute('SELECT server_ip, server_port FROM connection_table'):
+                    m = _IP_LOCAL.match(f'{ip}:{port}')
+                    if m:
+                        return m.group(1), int(m.group(2))
+            finally:
+                con.close()
+    except Exception:
+        pass
+    # el registre de la interfície del Synology Drive porta l'adreça de casa a cada intent de connexió
+    for linia in reversed(_cua(os.path.join(SYNO, 'log', 'ui.log'), 1 << 20)):
+        m = _IP_LOCAL.search(linia)
+        if m:
+            return m.group(1), int(m.group(2))
+    return None
+
+
+def nas_connectat(cache=120):
+    """True si es poden reanomenar carpetes i arxius del NAS sense perill: el NAS respon a la xarxa de casa i el
+    Synology Drive no està donant errors de connexió ara mateix. Si no se sap l'adreça del NAS, True (com abans)."""
+    import socket
+    if time.time() - _nas['t'] < cache:
+        return _nas['ok']
+    ok, motiu = True, ''
+    a = adreca_nas()
+    if a:
+        try:
+            socket.create_connection(a, timeout=4).close()
+        except OSError:
+            ok, motiu = False, f'el NAS ({a[0]}) no respon'
+    elif not _nas['avis']:
+        _nas['avis'] = True
+        log('  NAS: no sé l\'adreça del NAS per comprovar si hi és (es pot posar «nas_adreca» al config.ini)')
+    ui = os.path.join(SYNO, 'log', 'ui.log')
+    try:
+        recent = time.time() - os.path.getmtime(ui) < 600
+    except OSError:
+        recent = False
+    if ok and recent and any(_ERR_SYNO.search(l) for l in _cua(ui, 8192)[-15:]):
+        ok, motiu = False, 'el Synology Drive té errors de connexió'
+    if not ok and _nas['ok']:
+        log(f'  NAS: {motiu}; no es canvia cap nom de carpeta ni d\'arxiu fins que torni la connexió')
+    _nas.update(t=time.time(), ok=ok)
+    return ok
 
 
 def N(s):
