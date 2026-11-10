@@ -134,6 +134,14 @@ class Handler(BaseHTTPRequestHandler):
             st = llegeix('estat.json', {})
             st['en_marxa'] = bool(proces['p'] and proces['p'].poll() is None)
             return self._json(st)
+        if p == '/api/plex/reproductors':
+            import plex
+            if not plex.configurat():
+                return self._json({'configurat': False, 'reps': []})
+            try:
+                return self._json({'configurat': True, 'reps': [{k: r[k] for k in ('id', 'nom', 'pc')} for r in plex.reproductors()]})
+            except Exception as e:
+                return self._json({'configurat': True, 'reps': [], 'motiu': str(e)})
         if p.startswith('/caratules/'):
             nom = os.path.basename(p)
             return self._file(os.path.join(comu.CARATULES, nom), 'image/jpeg')
@@ -227,6 +235,25 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(comu.CARATULES, k + '.jpg'), 'wb') as f:
                     f.write(self._body())
                 return self._json({'ok': True})
+            if p == '/api/plex/play':
+                import plex
+                rec = json.loads(self._body() or b'{}')
+                with BLOC:
+                    discs = llegeix('discs.json', [])
+                    arts = llegeix('artistes.json', {})
+                d = next((x for x in discs if str(x.get('id')) == str(rec.get('id'))), None)
+                if not d:
+                    return self._json({'ok': False, 'motiu': 'No trobo el disc'})
+                tema = None
+                if rec.get('tema') is not None:
+                    temes = d.get('temes') or []
+                    i = int(rec['tema'])
+                    tema = temes[i] if 0 <= i < len(temes) else None
+                try:
+                    return self._json(plex.reprodueix(d, arts.get(str(d.get('artista')), ''), tema, rec.get('desti') or None))
+                except Exception as e:
+                    log(f'Plex: error {e!r}')
+                    return self._json({'ok': False, 'motiu': str(e)})
             if p == '/api/completa':
                 if proces['p'] and proces['p'].poll() is None:
                     return self._json({'ok': False, 'motiu': 'Ja està treballant'})

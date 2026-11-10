@@ -32,6 +32,9 @@ carpeta_musica = C:\\SynologyMusic\\Mi Musica
 # Adreça del NAS a casa (per no canviar noms d'arxius quan no hi ha connexió). Si es deixa buida, es busca sola
 nas_adreca =
 
+# Clau del Plex per fer sonar els discos al Plexamp (app.plex.tv > disc > ⋯ > Info > Mostra l'XML: el codi del final de l'adreça, després de «X-Plex-Token=»)
+plex_token =
+
 # Quants discos completa cada vegada
 discos_per_tanda = 100
 """

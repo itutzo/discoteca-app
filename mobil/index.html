@@ -91,6 +91,12 @@ ol.tracks.discs li{grid-template-columns:5.8em 1em minmax(0,1fr) auto}
 ol.tracks .s{text-align:center;margin-right:-4px}
 ol.tracks .n{font-family:var(--f-mono);color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 ol.tracks .c{color:var(--muted);font-size:13px;text-align:right}
+.plexbar:empty{display:none}
+.plexbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 0}
+.plexbar select{padding:6px 8px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);color:var(--fg);font:14px var(--f-body)}
+ol.tracks.play li{cursor:pointer}
+ol.tracks.play li:hover{background:var(--surface)}
+ol.tracks.play li.sona{background:var(--surface);font-weight:600}
 .star{color:var(--accent)}
 .tag{font:500 10px/1 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--line);border-radius:3px;padding:2px 5px;margin-left:6px;color:var(--muted)}
 .people{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 20px;font-size:14px}
@@ -379,6 +385,7 @@ const api = async (path, opts) => {
     return {ok: true};
   }
   if(p === '/api/estat') return {};
+  if(p === '/api/plex/reproductors') return {mobil: true, mapa: await llegeixJSON('/dades/plex.json', {})};
   throw new Error('no disponible al mòbil');
 };
 const postJSON = async (path, obj) => {
@@ -687,6 +694,7 @@ function renderSheet(){
         </dl>
       </div>
     </div>
+    <div class="plexbar" id="plexBar"></div>
     ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
@@ -698,7 +706,47 @@ function renderSheet(){
   sh.scrollTop = 0;
   loadDiscover(d);
   milloraSimilars(d);
+  plexBar(d);
 }
+/* ---------- Plexamp: fer sonar el disc o un tema (només des del PC; el mòbil obre el disc al Plex) ---------- */
+let plexInfo = null;
+const PLEX_LS = { get(){ try{ return localStorage.getItem('plex_desti') || ''; }catch{ return ''; } }, set(v){ try{ localStorage.setItem('plex_desti', v); }catch{} } };
+async function plexBar(d){
+  const box = $('#plexBar'); if(!box) return;
+  try{ plexInfo = await api('/api/plex/reproductors'); }catch{ plexInfo = null; }
+  if(!plexInfo || current !== d || !$('#plexBar')) return;
+  if(plexInfo.mobil){
+    const m = plexInfo.mapa?.[d.id];
+    if(m?.rk && m?.srv) box.innerHTML = `<a class="btn" href="https://app.plex.tv/desktop#!/server/${encodeURIComponent(m.srv)}/details?key=${encodeURIComponent('/library/metadata/' + m.rk)}" target="_blank" rel="noopener">▶ Obre al Plex</a>`;
+    return;
+  }
+  if(!plexInfo.configurat) return;
+  const reps = plexInfo.reps || [];
+  let desti = PLEX_LS.get();
+  if(desti && !reps.some(r => r.id === desti)) desti = '';
+  const opts = [['', 'Plexamp del PC']].concat(reps.filter(r => !r.pc).map(r => [r.id, r.nom]));
+  box.innerHTML = `<button class="btn primary" type="button" data-plex>▶ Reprodueix el disc</button>
+    <label>a <select id="plexDesti" aria-label="On sona">${opts.map(([v, n]) => `<option value="${esc(v)}"${v === desti ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>`;
+  $('#plexDesti').addEventListener('change', e => PLEX_LS.set(e.target.value));
+  const ol = $('#sheet ol.tracks'); if(ol){ ol.classList.add('play'); ol.title = 'Fes clic a un tema per fer-lo sonar al Plexamp'; }
+}
+async function plexPlay(tema, el){
+  if(!current) return;
+  const desti = $('#plexDesti')?.value || '';
+  toast(tema == null ? 'Enviant el disc al Plexamp…' : 'Enviant el tema al Plexamp…');
+  document.querySelectorAll('#sheet ol.tracks li.sona').forEach(x => x.classList.remove('sona'));
+  try{
+    const r = await postJSON('/api/plex/play', {id: current.id, tema, desti});
+    if(r.ok){ toast('Sona a: ' + r.on); el?.classList.add('sona'); }
+    else toast(r.motiu || 'No s\'ha pogut fer sonar.');
+  }catch{ toast('No s\'ha pogut fer sonar. Comprova que la Discoteca segueix oberta.'); }
+}
+document.addEventListener('click', e => {
+  if(e.target.closest('button[data-plex]')){ plexPlay(null); return; }
+  const li = e.target.closest('#sheet ol.tracks.play li');
+  if(li && !e.target.closest('a,button')) plexPlay([...li.parentNode.children].indexOf(li), li);
+});
+
 // cada recomanació s'obre a la font que diu la seva etiqueta: la pàgina exacta si la tenim, si no la cerca d'aquella web
 const CERCA = {
   'Apple Music': q => 'https://music.apple.com/es/search?term=' + encodeURIComponent(q),

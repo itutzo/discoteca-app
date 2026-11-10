@@ -2244,6 +2244,13 @@ def main():
                     so.analitza(a.n, estat=estat)
             except Exception as e:
                 log(f'So: error {e!r}')
+        # relació de cada disc amb el seu àlbum del Plex (per a l'enllaç «Obre al Plex» del mòbil)
+        if a.mode in ('nit', 'tot', 'plex'):
+            try:
+                import plex
+                plex.mapeja_tots()
+            except Exception as e:
+                log(f'Plex: error {e!r}')
         estat(f'Fet ({a.mode}): {fets} discos amb dades noves en {int((time.time() - t0) / 60)} min · {resum()} · {datetime.datetime.now():%d/%m %H:%M}')
     except Exception as e:
         log(f'ERROR general: {e!r}')
