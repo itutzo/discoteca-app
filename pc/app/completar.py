@@ -716,6 +716,34 @@ def revisa_titols(n=100):
 
 
 # ------------------------------------------------------------------ completar un disc
+def mb_encaixa(mb, d, dg, temes_d):
+    """MusicBrainz només busca per artista i títol, i hi ha artistes que es diuen igual (el «Borracho» de la maqueta
+    de 1994 i el grup d'stoner de Washington). El disc trobat només es fa servir si s'hi assembla: almenys la meitat
+    dels temes iguals o, si no hi ha temes per comparar, el mateix any que la fitxa o que Discogs."""
+    meus = {NT(t) for t in temes_d or [] if NT(t)}
+    seus = {NT(t.get('titol')) for t in mb.get('temes') or [] if NT(t.get('titol'))}
+    if meus and seus:
+        return len(meus & seus) >= max(1, min(len(meus), len(seus)) // 2)
+    anys = {str(d.get('any') or '')[:4], str((dg or {}).get('any') or '')[:4]} - {''}
+    if anys and mb.get('any'):
+        return mb['any'] in anys
+    return True
+
+
+def treu_dades_mb(d, mb, dg, auto, fonts_d, estils_meus):
+    """Si abans s'havia agafat aquest disc de MusicBrainz per error, se'n treuen l'enllaç i l'estil que havia posat el
+    programa (només si és a «auto» i no ve de Discogs: els camps de l'Ignasi no es toquen mai)."""
+    if fonts_d.get('MusicBrainz') == mb.get('url'):
+        fonts_d.pop('MusicBrainz', None)
+    gens = mb.get('generes') or []
+    seus = {N(estils_meus.get(N(x), x)) for x in gens} | {N(x) for x in gens}
+    de_dg = {N(x) for x in (dg or {}).get('estils', [])}
+    if 'estil' in auto and d.get('estil') and N(d['estil']) in seus and N(d['estil']) not in de_dg:
+        log(f"  Estil «{d['estil']}» tret: venia del disc equivocat de MusicBrainz")
+        d.pop('estil', None)
+        auto.discard('estil')
+
+
 def completa(d, artistes, estils_meus):
     nom_art = artistes.get(str(d['artista']), '')
     titol = d.get('titol', '')
@@ -731,6 +759,7 @@ def completa(d, artistes, estils_meus):
 
     # 1. Discogs: per codi de barres o número de catàleg si en tenim; si no, per artista i títol
     dg = None
+    temes_d = []
     try:
         if d.get('barcode') or d.get('catno'):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
@@ -772,6 +801,11 @@ def completa(d, artistes, estils_meus):
             mb = fonts.musicbrainz(nom_art, titol)
         except Exception as e:
             log(f'  MusicBrainz: error {e!r}')
+    if mb and not mb_encaixa(mb, d, dg, temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1]):
+        # un altre artista amb el mateix nom («Borracho»): ni l'enllaç ni les seves dades
+        log(f"  MusicBrainz: el disc que hi ha ({mb['url']}) no és aquest (temes o any diferents), no es fa servir")
+        treu_dades_mb(d, mb, dg, auto, fonts_d, estils_meus)
+        mb = None
     if mb:
         fonts_d['MusicBrainz'] = mb['url']
     if am:
