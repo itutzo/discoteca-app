@@ -273,6 +273,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
+class Servidor(ThreadingHTTPServer):
+    # Al Windows, «reutilitzar l'adreça» deixa obrir una segona Discoteca al mateix port: llavors la vella
+    # continua contestant i els canvis nous no es veuen. Sense això, la segona veu que el port és ocupat.
+    allow_reuse_address = os.name != 'nt'
+
+
 def reprograma_tasca():
     """Torna a registrar la tasca diària amb la ruta actual de la carpeta (per si s'ha mogut)."""
     try:
@@ -287,7 +293,7 @@ def main():
     importar_caratules_inicials()
     threading.Thread(target=reprograma_tasca, daemon=True).start()
     try:
-        srv = ThreadingHTTPServer(('127.0.0.1', PORT), Handler)
+        srv = Servidor(('127.0.0.1', PORT), Handler)
         SERVIDOR['srv'] = srv
     except OSError:
         # ja està obert: només obrim el navegador
