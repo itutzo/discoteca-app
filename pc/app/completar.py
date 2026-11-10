@@ -762,18 +762,10 @@ def completa(d, artistes, estils_meus):
             omple('catno', dg.get('catno'))
             omple('barcode', dg.get('barcode'))
 
-    # 2. AllMusic
+    # 2. AllMusic: ja no es consulta (bloqueja l'accés automàtic des del 28/10/2026; decisió de l'Ignasi, 10/11/2026)
     am = None
-    if nom_art and titol:
-        try:
-            am = fonts.allmusic(nom_art, titol)
-            d.pop('am_error', None)
-        except fonts.AMBloquejat:
-            d['am_error'] = AVUI         # es tornarà a provar quan AllMusic torni a respondre
-        except Exception as e:
-            d['am_error'] = AVUI
-            log(f'  AllMusic: error {e!r}')
-    # 2b. MusicBrainz: quan AllMusic no dona el disc (API oberta, permet l'accés automàtic)
+    d.pop('am_error', None)
+    # 2b. MusicBrainz (API oberta, permet l'accés automàtic)
     mb = None
     if not am and nom_art and titol:
         try:
@@ -1298,24 +1290,23 @@ def marca_dobles():
     log(f'Discos dobles: {n} discos es tornaran a completar per saber de quin CD és cada tema')
 
 
-def marca_reintents_allmusic():
-    """Un sol cop: els discos repassats des del 25/10/2026 sense dades d'AllMusic (AllMusic responia 403)
-    queden marcats perquè s'hi torni a provar."""
+def deixa_allmusic():
+    """Un sol cop (10/11/2026): AllMusic ja no es consulta, així que els discos que esperaven tornar-hi a provar
+    (marca `am_error`) deixen d'esperar. Les dades que ja tenien d'AllMusic es queden igual."""
     fetes = llegeix('migracions.json', {})
-    if fetes.get('allmusic_403'):
+    if fetes.get('allmusic_deixat'):
         return
     with comu.BLOC:
         discs = llegeix('discs.json', [])
         n = 0
         for d in discs:
-            if d.get('proc', '') >= '2026-10-25' and 'AllMusic' not in (d.get('fonts') or {}) and not d.get('am_error'):
-                d['am_error'] = d['proc']
+            if d.pop('am_error', None) is not None:
                 n += 1
         if n:
             desa('discs.json', discs)
-    fetes['allmusic_403'] = AVUI
+    fetes['allmusic_deixat'] = AVUI
     desa('migracions.json', fetes)
-    log(f'AllMusic: {n} discos marcats per tornar-hi a provar')
+    log(f"AllMusic: ja no es consulta; {n} discos deixen d'esperar-lo")
 
 
 # Textos en castellà de les entrades antigues, en català. Només es canvien els valors que coincideixen
@@ -1417,26 +1408,17 @@ def tanda(mode, n, id_=None):
             # discos ja repassats que es van quedar sense bitrate: es tornen a provar un cop
             sense_br = [d for d in discs if d.get('carpeta') and (not d.get('bitrate') and d.get('proc') or d.get('bitrate') == 'VBR')
                         and (d.get('br') or 0) < 3 and d.get('estat') != 'pendent']
-            # discos que AllMusic no va deixar consultar (403): un altre intent, com a molt un cop al dia
-            am_err = [d for d in discs if d.get('am_error') and d.get('estat') != 'pendent' and d.get('proc', '') < AVUI]
             ja = {id(x) for x in pend + sense_br}
-            cua = pend + sense_br + [d for d in am_err if id(d) not in ja] + mai + \
-                [d for d in falten if id(d) not in ja and not d.get('am_error')]
-    # la tanda són n discos repassats de debò: els ajornats perquè AllMusic està bloquejat no compten,
-    # perquè si no els que no s'han repassat mai (que van darrere a la cua) no hi arribarien mai
+            cua = pend + sense_br + mai + [d for d in falten if id(d) not in ja]
     total = min(n, len(cua))
     log(f'Tanda «{mode}»: {total} discos')
-    fets, saltats, compte = 0, 0, {'sí': 0, 'no': 0, 'error': 0, 'mb': 0}
+    fets, compte = 0, {'dg': 0, 'mb': 0}
     desador = Desador()
     try:
         i = 0
         for d in cua:
             if i >= total:
                 break
-            # si AllMusic ens ha tancat la porta, no cal repassar ara els discos que només esperaven AllMusic
-            if fonts._am_nav.bloquejat and d.get('am_error') and mode != 'disc' and d.get('estat') != 'pendent':
-                saltats += 1
-                continue
             i += 1
             nom = f"{artistes.get(str(d['artista']), '?')} - {d.get('titol', '')}"
             estat(f'{i}/{total} · {nom}')
@@ -1444,11 +1426,11 @@ def tanda(mode, n, id_=None):
             try:
                 d.pop('reintenta', None)
                 canvis, am, dg, mb = completa(d, artistes, estils_meus)
-                log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (AllMusic {'sí' if am else 'no'}, Discogs {'sí' if dg else 'no'}"
-                    f"{', MusicBrainz sí' if mb else ''})")
-                compte['error' if d.get('am_error') else 'sí' if am else 'no'] += 1
+                log(f"  {nom}: {', '.join(canvis) or 'res de nou'} (Discogs {'sí' if dg else 'no'}"
+                    f", MusicBrainz {'sí' if mb else 'no'})")
+                compte['dg'] += 1 if dg else 0
                 compte['mb'] += 1 if mb else 0
-                if not am and not dg and not mb and not d.get('am_error'):
+                if not am and not dg and not mb:
                     d['no_trobat'] = AVUI
                 elif am or dg or mb:
                     d.pop('no_trobat', None)
@@ -1461,9 +1443,7 @@ def tanda(mode, n, id_=None):
     finally:
         desador.desa()
     if cua:
-        log(f"AllMusic en aquesta tanda: {compte['sí']} trobats, {compte['no']} no hi són, {compte['error']} no ha deixat consultar"
-            f" · MusicBrainz: {compte['mb']} discos"
-            + (f" · {saltats} discos ajornats fins que AllMusic torni a respondre" if saltats else ''))
+        log(f"Fonts en aquesta tanda: Discogs {compte['dg']} discos · MusicBrainz {compte['mb']} discos (AllMusic ja no es consulta)")
     return fets
 
 
@@ -2199,9 +2179,9 @@ def main():
         except Exception as e:
             log(f'Discos dobles: error {e!r}')
         try:
-            marca_reintents_allmusic()
+            deixa_allmusic()
         except Exception as e:
-            log(f'AllMusic: error marcant reintents {e!r}')
+            log(f'AllMusic: error {e!r}')
         fets = 0
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)
