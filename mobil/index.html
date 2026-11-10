@@ -687,7 +687,7 @@ function renderSheet(){
         </dl>
       </div>
     </div>
-    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc((sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' ':'')+(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>
