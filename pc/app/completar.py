@@ -460,6 +460,15 @@ def artista_de_etiquetes(d, arrel, artistes):
                 break
     except OSError:
         return False
+    font = 'els arxius'
+    if not et.get('artista') and not dg_provat(d):
+        # els MP3 són «a demanda» (o no porten l'artista): el títol i els temes de la carpeta es busquen a Discogs
+        # (només el títol exacte, del mateix any i amb la majoria de temes iguals; un cop cada 30 dies)
+        d['art_dg'] = AVUI
+        temes = [t[1] for t in d.get('temes') or [] if len(t) > 1 and t[1]] or temes_carpeta(d)
+        art_dg = DG.artista_per_titol(sa[1] if sa[0] else (d.get('titol') or sa[1]), temes, sa[0])
+        if art_dg:
+            et, font = {'artista': art_dg}, 'Discogs'
     art = majuscules(nom_carpeta(et.get('artista', '')))
     if not art or N(art) in (N(nom), N(sa[0])) or re.match(r'^\d{4}$', art):
         return False
@@ -476,8 +485,72 @@ def artista_de_etiquetes(d, arrel, artistes):
     for k in ('no_trobat', 'proc'):
         d.pop(k, None)
     d['reintenta'] = True
-    log(f'  NAS: la carpeta «{c}» no porta l\'artista; segons els arxius és «{art}»')
+    d.pop('art_dg', None)
+    log(f'  NAS: la carpeta «{c}» no porta l\'artista; segons {font} és «{art}»')
     return vell
+
+
+def dg_provat(d, camp='art_dg'):
+    """Aquesta cerca a Discogs ja s'ha fet fa menys de 30 dies (camp amb la data de l'últim intent)."""
+    try:
+        return (datetime.date.today() - datetime.date.fromisoformat(d.get(camp) or '')).days < 30
+    except ValueError:
+        return False
+
+
+def identificat_per_temes(d, dg, nom_art, artistes):
+    """Disc nou que no s'ha trobat pel nom de la carpeta, però sí pels temes de dins (`Discogs.cerca_per_temes`):
+    l'artista i el títol que havia tret el programa del nom de la carpeta passen a ser els de Discogs, i la carpeta
+    es reanomenarà a «Artista - Any - Títol» (`posa_nom_identificat`, només amb el NAS connectat). Els anteriors es
+    guarden a «artista_abans»/«titol_abans» i a dades/titols_corregits.txt. Torna (artista, títol)."""
+    art = re.sub(r'\s*\(\d+\)$', '', dg.get('artista') or '').strip()
+    tit = majuscules(dg.get('titol') or '')
+    vell_t = d.get('titol', '')
+    if art and N(art) != N(nom_art):
+        d.setdefault('artista_abans', nom_art)
+        d['art_vell'] = d.get('artista')        # l'artista equivocat («1989», «Nova carpeta»): fora si es queda sense discos
+        d['artista'] = id_artista(art, artistes)
+    else:
+        art = nom_art
+    if tit and NT(tit) != NT(vell_t):
+        d.setdefault('titol_abans', vell_t)
+        d['titol'] = tit
+    d['ident_temes'] = True
+    log(f"  Reconegut pels temes de la carpeta «{d.get('carpeta', '')}»: és «{art} - {d.get('titol', '')}» (Discogs)")
+    try:
+        with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
+            f.write(f"{AVUI}\ttemes\t{nom_art} - {vell_t}\t{art} - {d.get('titol', '')}\t{d.get('carpeta', '')}\n")
+    except OSError:
+        pass
+    return art, d.get('titol', '')
+
+
+def posa_nom_identificat(d, arrel, artistes):
+    """Carpeta d'un disc reconegut pels temes: passa a «Artista - Any - Títol» amb l'artista i el títol bons (després
+    se'n formaten els arxius). Si encara no té l'any, s'espera. Torna True si l'ha reanomenada."""
+    c = d.get('carpeta') or ''
+    any_ = str(d.get('any') or '').strip()
+    art = nom_carpeta(artistes.get(str(d.get('artista')), ''))
+    tit = majuscules(nom_carpeta(d.get('titol') or ''))
+    if not art or not tit or not re.match(r'^\d{4}$', any_) or not os.path.isdir(os.path.join(arrel, c)):
+        return False
+    nou = f'{art} - {any_} - {tit}'
+    if nou == c:
+        d.pop('ident_temes', None)
+        return False
+    if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
+        log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+        return False
+    try:
+        os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+    except OSError as e:
+        log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+        return False
+    d['carpeta'] = nou
+    d.pop('fmt_m', None)
+    d.pop('ident_temes', None)
+    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (reconeguda pels temes)')
+    return True
 
 
 def posa_artista_carpeta(d, arrel, artistes):
@@ -729,6 +802,15 @@ def formata_tots():
         vells = set()
         for d in discs:
             c = d.get('carpeta')
+            if d.get('art_vell'):
+                vells.add(str(d.pop('art_vell')))
+                canvi += 1
+            if c in mtimes and d.get('ident_temes'):
+                # disc reconegut pels temes de dins la carpeta: «Artista - Any - Títol» amb les dades de Discogs
+                if posa_nom_identificat(d, arrel, artistes):
+                    mtimes[d['carpeta']] = mtimes.pop(c)
+                    canvi += 1
+                continue
             if c not in mtimes or CARPETA.match(c):
                 continue
             try:
@@ -883,6 +965,20 @@ def completa(d, artistes, estils_meus):
                 or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
         log(f'  Discogs: error {e!r}')
+    # 1b. disc nou d'una carpeta del NAS que no s'ha trobat pel nom (la carpeta no porta l'artista o el títol bons):
+    # es busca pels temes de dins (els noms dels arxius), un cop cada 30 dies
+    if not dg and d.get('carpeta') and str(d.get('id', '')).startswith('nas') and 'Discogs' not in fonts_d \
+            and 'titol' in auto and not dg_provat(d, 'id_temes'):
+        try:
+            temes_d = temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1 and t[1]] or temes_carpeta(d)
+            d['id_temes'] = AVUI
+            dg = DG.cerca_per_temes(temes_d, d.get('any', ''))
+        except Exception as e:
+            log(f'  Discogs (per temes): error {e!r}')
+        if dg:
+            nom_art, titol = identificat_per_temes(d, dg, nom_art, artistes)
+            auto |= {'artista', 'titol'}
+            canvis.append('titol')
     if dg and dg.get('relacionat'):
         nom_art = corregeix_artista(d, dg['artista'], nom_art, artistes)
         auto.add('artista')
