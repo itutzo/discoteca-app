@@ -596,6 +596,115 @@ def treu_copies_arxius(discs, arrel, mtimes):
     return canvi
 
 
+SENSE_PERDUA = ('.flac', '.ape', '.wav')
+
+
+def bitrate_mp3_carpeta(d, ruta):
+    """Bitrate dels MP3 d'una carpeta: la capçalera dels que ja són al PC (mai s'obren els «a demanda») o,
+    si no, el que diu la fitxa (el bitrate de la fitxa sempre és el dels MP3). None si no se sap."""
+    mp3 = []
+    for root, _, files in os.walk(ruta):
+        for f in files:
+            if f.lower().endswith('.mp3'):
+                st = os.stat(os.path.join(root, f))
+                mp3.append((os.path.join(root, f), st.st_size, not getattr(st, 'st_file_attributes', 0) & NO_LOCAL))
+    br = bitrate_capcaleres(mp3) if mp3 else None
+    br = br or str(d.get('bitrate') or '').strip()
+    return br if re.match(r'^(\d{2,3}|VBR ~\d+)$', br) else None
+
+
+def formats_repetits(d, arrel):
+    """El mateix tema en MP3 i en FLAC (o un altre format sense pèrdua) a la carpeta d'un disc.
+    Norma de l'Ignasi (11/11/2026): només en pot quedar un; si l'MP3 és de 320 es queda l'MP3, si és de menys
+    (o variable), el FLAC. Torna (format que se'n va, [rutes dels arxius que se'n van]) o None.
+    Només si cada tema repetit té exactament un arxiu de cada format i se sap el bitrate. No s'obre cap àudio."""
+    c = d.get('carpeta')
+    m = CARPETA.match(c or '')
+    ruta = os.path.join(arrel, c or '')
+    if not m or not os.path.isdir(ruta):
+        return None
+    art, tit = m.group(1).strip(), m.group(3).strip()
+    discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
+             if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
+    parells = []
+    for root, _, files in os.walk(ruta):
+        sub = os.path.relpath(root, ruta)
+        mc = re.search(r'(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b', sub, re.I) if sub != '.' else None
+        grups = {}
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext != '.mp3' and ext not in SENSE_PERDUA:
+                continue
+            x = nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs)
+            if not x:
+                continue
+            grups.setdefault(x[0], []).append((ext, os.path.join(root, f)))
+        for g in grups.values():
+            exts = [e for e, _ in g]
+            if len(g) < 2:
+                continue
+            if len(g) != 2 or exts.count('.mp3') != 1 or len(set(exts)) != 2:
+                return None         # no és clar: no es toca res
+            parells.append(dict(g))
+    if not parells:
+        return None
+    br = bitrate_mp3_carpeta(d, ruta)
+    if not br:
+        return None
+    if br == '320':
+        return 'flac', [r for p in parells for e, r in p.items() if e != '.mp3']
+    return 'mp3', [p['.mp3'] for p in parells]
+
+
+def treu_formats_repetits(discs, arrel, mtimes):
+    """Mou a la paperera de duplicats el format que sobra (vegeu formats_repetits()) i ho apunta al registre.
+    Si el suport i el bitrate de la fitxa els havia posat el programa, s'actualitzen."""
+    paperera = os.path.join(arrel, f'.Paperera duplicats {AVUI}')
+    canvi = 0
+    for d in discs:
+        c = d.get('carpeta')
+        if c not in mtimes or d.get('dfm_m') == mtimes[c] or not CARPETA.match(c):
+            continue
+        r = formats_repetits(d, arrel)
+        n = 0
+        if r:
+            fora, rutes = r
+            for f in rutes:
+                desti = os.path.join(paperera, os.path.relpath(f, arrel))
+                try:
+                    os.makedirs(os.path.dirname(desti), exist_ok=True)
+                    if os.path.exists(desti):
+                        b, e = os.path.splitext(desti)
+                        desti = f'{b} ({int(time.time())}){e}'
+                    os.rename(f, desti)
+                except OSError as e:
+                    log(f'  NAS: ara no puc moure «{os.path.relpath(f, arrel)}» ({e}); s\'hi tornarà a provar')
+                    n = -1
+                    break
+                n += 1
+                try:
+                    with open(os.path.join(comu.DADES, f'duplicats_moguts_{AVUI}.txt'), 'a', encoding='utf-8') as fr:
+                        fr.write(f'{datetime.datetime.now():%H:%M:%S}\tformat repetit ({fora})\t'
+                                 f'{os.path.relpath(f, arrel)}\t-> {os.path.relpath(desti, arrel)}\n')
+                except OSError:
+                    pass
+            if n > 0:
+                queda = 'flac' if fora == 'mp3' else 'mp3'
+                log(f'  NAS: «{c}» tenia els temes en MP3 i FLAC: {n} arxius {fora.upper()} moguts a '
+                    f'«.Paperera duplicats {AVUI}» (es queda el {queda.upper()})')
+                auto = d.get('auto') or []
+                if 'suport' in auto:
+                    L = [x for x in comu.suports(d) if x != fora]
+                    d['suport'] = ', '.join(L)
+                if fora == 'mp3' and 'bitrate' in auto:
+                    d['bitrate'] = 'Flac'
+                mtimes[c] = os.stat(os.path.join(arrel, c)).st_mtime
+        if n >= 0:
+            d['dfm_m'] = mtimes[c]
+            canvi += 1
+    return canvi
+
+
 def formata_tots():
     """Cada vegada: les carpetes sense l'any passen a «Artista - Any - Títol» (si la fitxa ja té l'any), i els
     arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
@@ -612,6 +721,10 @@ def formata_tots():
             canvi += treu_copies_arxius(discs, arrel, mtimes)
         except Exception as e:
             log(f'  NAS: error buscant arxius repetits {e!r}')
+        try:
+            canvi += treu_formats_repetits(discs, arrel, mtimes)
+        except Exception as e:
+            log(f'  NAS: error buscant temes repetits en MP3 i FLAC {e!r}')
         artistes = llegeix('artistes.json', {})
         vells = set()
         for d in discs:
