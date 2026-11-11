@@ -294,8 +294,9 @@ def formata_arxius(d, arrel):
         mc = re.search(r'(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b', sub, re.I) if sub != '.' else None
         musica = [f for f in files if os.path.splitext(f)[1].lower() in EXT]
         nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs) for f in musica}
-        claus = [x[0] for x in nous.values() if x]
-        # dos arxius amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res d'aquesta carpeta
+        # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3», Thelonious Monster) no és cap conflicte
+        claus = [(x[0], os.path.splitext(f)[1].lower()) for f, x in nous.items() if x]
+        # dos arxius del mateix format amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res
         if len(claus) != len(set(claus)):
             continue
         for f, x in nous.items():
@@ -1587,16 +1588,32 @@ def num_titol(nom):
     return '', nom
 
 
+# si un tema és a la carpeta en dos formats, el títol de la fitxa és el de l'arxiu de més qualitat
+ORDRE_FORMAT = {'.flac': 0, '.ape': 1, '.wav': 2, '.m4a': 3, '.mp3': 4, '.ogg': 5, '.wma': 6}
+
+
 def temes_de_noms(arxius):
     out = []
     multi = len({s for s, _ in arxius}) > 1 or any(re.search(r'- (?:CD|Disc) ?\d+ -', a) for _, a in arxius)
     for sub, a in arxius:
-        nom = os.path.splitext(a)[0]
+        nom, ext = os.path.splitext(a)
         cd = re.search(r'(?:CD|Disc)\s*(\d+)', sub + ' ' + nom, re.I)
         num, tit = num_titol(nom)
         clau = (sub, int(cd.group(1)) if cd else 0, int(num) if num else 10 ** 4, a.lower())
-        out.append((clau, [num, tit, '', ('CD' + cd.group(1)) if (multi and cd) else '', 0, 0]))
-    return [t for _, t in sorted(out)]       # per número de pista, no per l'ordre alfabètic dels arxius
+        out.append((clau, ext.lower(), [num, tit, '', ('CD' + cd.group(1)) if (multi and cd) else '', 0, 0]))
+    # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3»: mateixa subcarpeta, CD i número, un arxiu de
+    # cada format) és un sol tema a la fitxa, amb el títol de l'arxiu de més qualitat
+    grups = {}
+    for x in out:
+        if x[2][0]:
+            grups.setdefault(x[0][:3], []).append(x)
+    fora = set()
+    for g in grups.values():
+        exts = [x[1] for x in g]
+        if len(g) > 1 and len(set(exts)) == len(exts):
+            bo = min(g, key=lambda x: ORDRE_FORMAT.get(x[1], 9))
+            fora |= {id(x) for x in g if x is not bo}
+    return [t for c, _, t in sorted((x for x in out if id(x) not in fora), key=lambda x: x[0])]   # per número de pista
 
 
 def arxius_de(ruta):
