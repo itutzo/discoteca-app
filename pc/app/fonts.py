@@ -457,7 +457,7 @@ class Discogs:
                 bons.append(re.sub(r'\s*\(\d+\)$', '', rel.get('artista') or art_x).strip())
         return bons[0] if len({N(b) for b in bons}) == 1 else ''
 
-    def cerca_per_temes(self, temes, any_=''):
+    def cerca_per_temes(self, temes, any_='', titol=''):
         """Per a una carpeta que no porta ni l'artista ni el títol bons («Nova carpeta», «CD1», «1989 - Disc»): busca a
         Discogs els discos que tenen els temes més característics de la carpeta (els noms dels arxius, sense obrir-los)
         i en dona l'edició només si hi coincideix la majoria de temes (3 o més, el 60 % dels de la carpeta i el 60 %
@@ -472,8 +472,13 @@ class Discogs:
         noms = [t for t in (temes or []) if NT(t) and not generics.match(NT(t))]
         noms = sorted(dict.fromkeys(noms), key=lambda t: -len(NT(t)))[:4]
         punts, mostra = {}, {}
-        for t in noms:
-            r = self.api('/database/search', type='release', track=t, per_page=50) or {}
+        # amb el títol de la carpeta («Touch»), la cerca de cada tema es limita als discos que es diuen així: un tema
+        # amb un nom corrent («Tell It Like It Is») surt a centenars de discos i el bo pot quedar fora dels resultats
+        consultes = [{'track': t} for t in noms]
+        if NT(titol):
+            consultes = [{'track': t, 'release_title': titol} for t in noms] + consultes
+        for q in consultes:
+            r = self.api('/database/search', type='release', per_page=100, **q) or {}
             vistos = set()
             for x in (r.get('results') or []):
                 k = ('m', x['master_id']) if x.get('master_id') else ('r', x.get('id'))
