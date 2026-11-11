@@ -717,7 +717,7 @@ async function plexBar(d){
   if(!plexInfo || current !== d || !$('#plexBar')) return;
   if(plexInfo.mobil){
     const m = plexInfo.mapa?.[d.id];
-    if(m?.rk && m?.srv) box.innerHTML = `<a class="btn" href="https://app.plex.tv/desktop#!/server/${encodeURIComponent(m.srv)}/details?key=${encodeURIComponent('/library/metadata/' + m.rk)}" target="_blank" rel="noopener">▶ Obre al Plex</a>`;
+    if(m?.rk && m?.srv) box.innerHTML = `<a class="btn" href="https://app.plex.tv/desktop/#!/server/${encodeURIComponent(m.srv)}/details?key=${encodeURIComponent('/library/metadata/' + m.rk)}" target="_blank" rel="noopener">▶ Obre al Plex</a>`;
     return;
   }
   if(!plexInfo.configurat) return;
