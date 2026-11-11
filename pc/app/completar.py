@@ -525,7 +525,20 @@ def identificat_per_temes(d, dg, nom_art, artistes):
     return art, d.get('titol', '')
 
 
-def posa_nom_identificat(d, arrel, artistes):
+def posa_nom_complet(d, arrel, artistes):
+    """Carpeta amb un sol nom, sense guions («Noiseworks», «Days Of The New»): no se sap si és l'artista o el títol,
+    però quan el disc ja s'ha trobat a Discogs o MusicBrainz i la fitxa té l'any, passa a «Artista - Any - Títol» amb
+    les dades de la fitxa (i després se'n formaten els arxius). Els recopilatoris («Varios») no es toquen."""
+    c = d.get('carpeta') or ''
+    fonts_d = d.get('fonts') or {}
+    if CARPETA.match(c) or SENSE_ANY.match(c) or not (fonts_d.get('Discogs') or fonts_d.get('MusicBrainz')):
+        return False
+    if N(artistes.get(str(d.get('artista')), '')) in ('varios', 'various', 'variousartists', 'va'):
+        return False
+    return posa_nom_identificat(d, arrel, artistes, 'amb les dades de la fitxa')
+
+
+def posa_nom_identificat(d, arrel, artistes, motiu='reconeguda pels temes'):
     """Carpeta d'un disc reconegut pels temes: passa a «Artista - Any - Títol» amb l'artista i el títol bons (després
     se'n formaten els arxius). Si encara no té l'any, s'espera. Torna True si l'ha reanomenada."""
     c = d.get('carpeta') or ''
@@ -549,7 +562,7 @@ def posa_nom_identificat(d, arrel, artistes):
     d['carpeta'] = nou
     d.pop('fmt_m', None)
     d.pop('ident_temes', None)
-    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (reconeguda pels temes)')
+    log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» ({motiu})')
     return True
 
 
@@ -823,7 +836,7 @@ def formata_tots():
                 canvi += 1
             if neteja_titol_nou(d):
                 canvi += 1
-            if posa_artista_carpeta(d, arrel, artistes) or posa_any_carpeta(d, arrel):
+            if posa_artista_carpeta(d, arrel, artistes) or posa_any_carpeta(d, arrel) or posa_nom_complet(d, arrel, artistes):
                 mtimes[d['carpeta']] = mtimes.pop(c)
                 canvi += 1
         # l'artista equivocat («2009») sense cap altre disc: fora
