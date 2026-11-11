@@ -460,6 +460,15 @@ def artista_de_etiquetes(d, arrel, artistes):
                 break
     except OSError:
         return False
+    font = 'els arxius'
+    if not et.get('artista') and not dg_provat(d):
+        # els MP3 són «a demanda» (o no porten l'artista): el títol i els temes de la carpeta es busquen a Discogs
+        # (només el títol exacte, del mateix any i amb la majoria de temes iguals; un cop cada 30 dies)
+        d['art_dg'] = AVUI
+        temes = [t[1] for t in d.get('temes') or [] if len(t) > 1 and t[1]] or temes_carpeta(d)
+        art_dg = DG.artista_per_titol(sa[1] if sa[0] else (d.get('titol') or sa[1]), temes, sa[0])
+        if art_dg:
+            et, font = {'artista': art_dg}, 'Discogs'
     art = majuscules(nom_carpeta(et.get('artista', '')))
     if not art or N(art) in (N(nom), N(sa[0])) or re.match(r'^\d{4}$', art):
         return False
@@ -476,8 +485,17 @@ def artista_de_etiquetes(d, arrel, artistes):
     for k in ('no_trobat', 'proc'):
         d.pop(k, None)
     d['reintenta'] = True
-    log(f'  NAS: la carpeta «{c}» no porta l\'artista; segons els arxius és «{art}»')
+    d.pop('art_dg', None)
+    log(f'  NAS: la carpeta «{c}» no porta l\'artista; segons {font} és «{art}»')
     return vell
+
+
+def dg_provat(d):
+    """L'artista d'una carpeta sense artista ja s'ha buscat a Discogs fa menys de 30 dies."""
+    try:
+        return (datetime.date.today() - datetime.date.fromisoformat(d.get('art_dg') or '')).days < 30
+    except ValueError:
+        return False
 
 
 def posa_artista_carpeta(d, arrel, artistes):

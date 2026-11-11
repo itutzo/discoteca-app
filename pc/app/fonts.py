@@ -418,6 +418,45 @@ class Discogs:
                 return rel
         return None
 
+    def artista_per_titol(self, titol, temes, any_=''):
+        """Per a una carpeta sense l'artista («1989 - God's Balls») quan els MP3 són «a demanda» i no se'n pot
+        llegir l'etiqueta: busca el títol exacte a Discogs sense artista i només en dona l'artista si el disc té la
+        majoria de temes iguals que els noms dels arxius (3 o més, el 60 % dels de la carpeta i el 60 % dels de
+        Discogs), és de l'any de la carpeta (si en porta) i un sol artista hi encaixa. Torna el nom o ''."""
+        meus = [NT(t) for t in (temes or []) if NT(t)]
+        any_ = str(any_ or '')[:4]
+        if len(meus) < 3 or len(NT(titol)) < 3:
+            return ''
+        semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
+        cands, vist = [], set()
+        for q in ({'type': 'master', 'release_title': titol}, {'type': 'release', 'release_title': titol}):
+            r = self.api('/database/search', per_page=50, **q) or {}
+            for x in (r.get('results') or []):
+                art_x, _, tit_x = (x.get('title') or '').partition(' - ')
+                art_x = re.sub(r'\s*\(\d+\)$', '', art_x.rstrip('*')).strip()
+                if NT(tit_x) != NT(titol) or not N(art_x) or N(art_x) in vist:
+                    continue
+                vist.add(N(art_x))
+                cands.append((q['type'], x, art_x))
+        # primer els de l'any de la carpeta
+        cands.sort(key=lambda c: str(c[1].get('year') or '') != any_ if any_ else 0)
+        bons = []
+        for tipus, x, art_x in cands[:6]:
+            if tipus == 'master':
+                m = self.api(f"/masters/{x['id']}")
+                rel = self.release(m['main_release']) if m else None
+            else:
+                rel = self.release(x['id'])
+            if not rel:
+                continue
+            if any_ and any_ not in {str(x.get('year') or '')[:4], str(rel.get('any') or '')[:4]}:
+                continue
+            seus = [NT(t['titol']) for t in rel['temes'] if NT(t['titol'])]
+            iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
+            if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
+                bons.append(re.sub(r'\s*\(\d+\)$', '', rel.get('artista') or art_x).strip())
+        return bons[0] if len({N(b) for b in bons}) == 1 else ''
+
     def release(self, rid):
         rel = self.api(f'/releases/{rid}')
         if not rel:
