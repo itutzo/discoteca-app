@@ -457,6 +457,62 @@ class Discogs:
                 bons.append(re.sub(r'\s*\(\d+\)$', '', rel.get('artista') or art_x).strip())
         return bons[0] if len({N(b) for b in bons}) == 1 else ''
 
+    def cerca_per_temes(self, temes, any_=''):
+        """Per a una carpeta que no porta ni l'artista ni el títol bons («Nova carpeta», «CD1», «1989 - Disc»): busca a
+        Discogs els discos que tenen els temes més característics de la carpeta (els noms dels arxius, sense obrir-los)
+        i en dona l'edició només si hi coincideix la majoria de temes (3 o més, el 60 % dels de la carpeta i el 60 %
+        dels de Discogs) i cap altre disc no hi encaixa igual de bé. L'any, si n'hi ha, només serveix per triar."""
+        meus = [NT(t) for t in (temes or []) if NT(t)]
+        if len(meus) < 3:
+            return None
+        any_ = str(any_ or '')[:4]
+        semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
+        generics = re.compile(r'^(intro|outro|interlude|untitled|hiddentrack|bonustrack|track\d*|pista\d*|\d+)$')
+        # els temes més característics: els títols més llargs que no són genèrics («Intro», «Untitled»)
+        noms = [t for t in (temes or []) if NT(t) and not generics.match(NT(t))]
+        noms = sorted(dict.fromkeys(noms), key=lambda t: -len(NT(t)))[:4]
+        punts, mostra = {}, {}
+        for t in noms:
+            r = self.api('/database/search', type='release', track=t, per_page=50) or {}
+            vistos = set()
+            for x in (r.get('results') or []):
+                k = ('m', x['master_id']) if x.get('master_id') else ('r', x.get('id'))
+                if k in vistos:
+                    continue
+                vistos.add(k)
+                punts[k] = punts.get(k, 0) + 1
+                mostra.setdefault(k, x)
+        # primer els que surten amb més temes; després, els de l'any de la carpeta
+        cands = sorted(punts, key=lambda k: (-punts[k], str(mostra[k].get('year') or '') != any_ if any_ else 0))
+        cands = [k for k in cands if punts[k] >= min(2, len(noms))][:6]
+        bons = []
+        for k in cands:
+            if k[0] == 'm':
+                m = self.api(f"/masters/{k[1]}")
+                rel = self.release(m['main_release']) if m else None
+                if rel:
+                    rel['master'] = m
+            else:
+                rel = self.release(k[1])
+            if not rel:
+                continue
+            seus = [NT(x['titol']) for x in rel['temes'] if NT(x['titol'])]
+            iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
+            if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
+                anys = {str((rel.get('master') or {}).get('year') or '')[:4], str(rel.get('any') or '')[:4]}
+                # el que s'assembla més en conjunt: un recopilatori amb els mateixos temes i molts més queda per sota
+                bons.append(((round(iguals / max(len(meus), len(seus)), 3), any_ in anys), rel))
+        if not bons:
+            return None
+        bons.sort(key=lambda b: b[0], reverse=True)
+        millor = bons[0]
+        # un altre disc (no una altra edició del mateix) que hi encaixa gairebé igual de bé: no es pot saber quin és
+        if any(millor[0][0] - b[0][0] < 0.1 and (N(b[1]['artista']), NT(b[1]['titol'])) != (N(millor[1]['artista']), NT(millor[1]['titol']))
+               for b in bons[1:]):
+            return None
+        millor[1]['per_temes'] = True
+        return millor[1]
+
     def release(self, rid):
         rel = self.api(f'/releases/{rid}')
         if not rel:
