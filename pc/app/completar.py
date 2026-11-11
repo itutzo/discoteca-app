@@ -448,7 +448,7 @@ def artista_de_etiquetes(d, arrel, artistes):
     nom = artistes.get(str(d.get('artista')), '')
     # només si l'artista de la fitxa és el que es va treure del nom de la carpeta (l'any o la carpeta sencera) i
     # encara no s'ha trobat a cap font d'internet (els recopilatoris «Varios» ja tenen fonts i no es toquen)
-    if not sa or d.get('art_id3') or d.get('fonts') or N(nom) not in (N(sa[0]), N(c)):
+    if not sa or d.get('art_id3') or d.get('fonts') or N(nom) not in (N(sa[0]), N(c)) or cancons_soltes(nom, sa[1]):
         return False
     ruta = os.path.join(arrel, c)
     try:
@@ -534,7 +534,7 @@ def posa_nom_complet(d, arrel, artistes):
     # només si el disc de Discogs s'ha comprovat amb els temes de la carpeta (no el «Touch» d'un altre grup)
     if CARPETA.match(c) or SENSE_ANY.match(c) or not fonts_d.get('Discogs') or not d.get('dg_ok'):
         return False
-    if N(artistes.get(str(d.get('artista')), '')) in ('varios', 'various', 'variousartists', 'va'):
+    if N(artistes.get(str(d.get('artista')), '')) in VARIOS:
         return False
     return posa_nom_identificat(d, arrel, artistes, 'amb les dades de la fitxa')
 
@@ -890,7 +890,8 @@ def revisa_titols(n=100):
     discs = llegeix('discs.json', [])
     artistes = llegeix('artistes.json', {})
     cua = [d for d in discs if 'Discogs' not in (d.get('fonts') or {}) and not d.get('tit_rev')
-           and artistes.get(str(d.get('artista'))) and d.get('titol')][:n]
+           and artistes.get(str(d.get('artista'))) and d.get('titol')
+           and not cancons_soltes(artistes.get(str(d.get('artista'))), d.get('titol'))][:n]
     if not cua:
         return
     estat('Revisant títols a Discogs…')
@@ -938,6 +939,15 @@ def mb_encaixa(mb, d, dg, temes_d):
     if anys and mb.get('any'):
         return mb['any'] in anys
     return True
+
+
+VARIOS = {'varios', 'various', 'variousartists', 'va', 'varis', 'diversos', 'sueltas', 'soltes', 'solts'}
+
+
+def cancons_soltes(nom_art, titol):
+    """La carpeta «Varios» (artista i títol genèrics) són cançons soltes, no un disc: no es busca a internet ni es
+    reanomena. Els recopilatoris de veritat («Varios - Grease») tenen títol propi i sí que es busquen."""
+    return N(nom_art) in VARIOS and N(titol) in VARIOS
 
 
 def dg_encaixa(dg, temes_d):
@@ -998,6 +1008,19 @@ def completa(d, artistes, estils_meus):
             d[k] = v
             auto.add(k)
             canvis.append(k)
+
+    # 0. Carpeta de cançons soltes sense relació entre elles («Varios»: temes inèdits d'Aerosmith i altres que l'Ignasi
+    # ha anat trobant, 11/11/2026): no és cap disc, no es busca enlloc. Si abans s'hi havia posat un disc equivocat de
+    # Discogs (un recopilatori «Varios» de 1985), se'n treuen l'enllaç i les dades automàtiques.
+    if cancons_soltes(nom_art, titol):
+        if fonts_d.get('Discogs'):
+            treu_dades_dg(d, {'url': fonts_d['Discogs'], 'id': d.get('discogs_release')}, auto, fonts_d)
+            canvis.append('fonts')
+        d['fonts'] = fonts_d
+        d['auto'] = sorted(auto)
+        d['proc'] = AVUI
+        d.pop('reintenta', None)
+        return canvis, False, False, False
 
     # 1. Discogs: per codi de barres o número de catàleg si en tenim; si no, per artista i títol
     dg = None
@@ -2371,6 +2394,7 @@ def destaca_temes(maxim=300, id_=None):
     discs = llegeix('discs.json', [])
     cua = [d for d in discs if (str(d.get('id')) == str(id_) if id_ else True)
            and len(d.get('temes') or []) >= 2 and artistes.get(str(d.get('artista')))
+           and not cancons_soltes(artistes.get(str(d.get('artista'))), d.get('titol'))
            and not any(len(t) > 6 and t[6] for t in d['temes']) and not any(len(t) > 3 and str(t[3]).strip() == '*' for t in d['temes'])
            and (id_ or not d.get('dst') or (d.get('dst_n') == 0 and d['dst'] < fa180))]
     if not id_:
