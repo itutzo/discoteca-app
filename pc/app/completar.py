@@ -939,6 +939,38 @@ def mb_encaixa(mb, d, dg, temes_d):
     return True
 
 
+def dg_encaixa(dg, temes_d):
+    """El disc de Discogs trobat per artista i títol és el de la carpeta: almenys la meitat dels temes iguals (o
+    molt semblants). Si no hi ha prou temes per comparar (menys de 3), es dona per bo."""
+    meus = [NT(t) for t in temes_d or [] if NT(t)]
+    seus = [NT(t.get('titol')) for t in dg.get('temes') or [] if NT(t.get('titol'))]
+    if len(meus) < 3 or not seus:
+        return True
+    iguals = sum(1 for t in meus if any(t == u or SequenceMatcher(None, t, u).ratio() >= 0.85 for u in seus))
+    return iguals >= max(2, min(len(meus), len(seus)) // 2)
+
+
+def treu_dades_dg(d, dg, auto, fonts_d):
+    """S'havia agafat un disc equivocat de Discogs (un altre artista amb el mateix nom de disc): se'n treuen l'enllaç
+    i les dades que havia posat el programa (només les d'«auto»: els camps de l'Ignasi no es toquen), perquè es
+    tornin a omplir amb el disc bo. L'enllaç de MusicBrainz posat amb el mateix nom equivocat també es treu."""
+    if not (fonts_d.get('Discogs') and (fonts_d.get('Discogs') == dg.get('url') or d.get('discogs_release') == dg.get('id'))):
+        return
+    fonts_d.pop('Discogs', None)
+    fonts_d.pop('MusicBrainz', None)
+    d.pop('discogs_release', None)
+    trets = []
+    for k in ('segell', 'edicio', 'catno', 'barcode', 'any', 'genere', 'estil', 'interprets', 'bitrate', 'caratula'):
+        if k in auto and d.get(k):
+            d.pop(k, None)
+            auto.discard(k)
+            trets.append(k)
+    if 'caratula' in trets:
+        d.pop('cv', None)
+    if trets:
+        log(f"  Dades del disc equivocat de Discogs tretes: {', '.join(trets)}")
+
+
 def treu_dades_mb(d, mb, dg, auto, fonts_d, estils_meus):
     """Si abans s'havia agafat aquest disc de MusicBrainz per error, se'n treuen l'enllaç i l'estil que havia posat el
     programa (només si és a «auto» i no ve de Discogs: els camps de l'Ignasi no es toquen mai)."""
@@ -978,6 +1010,13 @@ def completa(d, artistes, estils_meus):
                 or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
         log(f'  Discogs: error {e!r}')
+    # 1a. disc nou del NAS: el de Discogs trobat pel nom només serveix si té els mateixos temes que la carpeta (la
+    # carpeta «Touch» de Noiseworks i el «Touch» del grup austríac Touch, 11/11/2026)
+    if dg and not dg.get('aprox') and not (d.get('barcode') or d.get('catno')) and str(d.get('id', '')).startswith('nas') \
+            and not dg_encaixa(dg, temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1]):
+        log(f"  Discogs: «{nom_art} - {titol}» de Discogs ({dg.get('url')}) té uns altres temes, no és aquest disc")
+        treu_dades_dg(d, dg, auto, fonts_d)
+        dg = None
     # 1b. disc nou d'una carpeta del NAS que no s'ha trobat pel nom (la carpeta no porta l'artista o el títol bons):
     # es busca pels temes de dins (els noms dels arxius), un cop cada 30 dies
     if not dg and d.get('carpeta') and str(d.get('id', '')).startswith('nas') and 'Discogs' not in fonts_d \
