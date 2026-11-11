@@ -135,12 +135,13 @@ class Handler(BaseHTTPRequestHandler):
             st['en_marxa'] = bool(proces['p'] and proces['p'].poll() is None)
             return self._json(st)
         if p == '/api/plex/reproductors':
-            import plex
-            if not plex.configurat():
-                return self._json({'configurat': False, 'reps': []})
             try:
+                import plex
+                if not plex.configurat():
+                    return self._json({'configurat': False, 'reps': []})
                 return self._json({'configurat': True, 'reps': [{k: r[k] for k in ('id', 'nom', 'pc')} for r in plex.reproductors()]})
             except Exception as e:
+                log(f'Plex: error {e!r}')
                 return self._json({'configurat': True, 'reps': [], 'motiu': str(e)})
         if p.startswith('/caratules/'):
             nom = os.path.basename(p)

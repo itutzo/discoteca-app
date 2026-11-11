@@ -22,8 +22,11 @@ def _cfg():
     tok = str(c.get('plex_token', '') or '').strip()
     adr = str(c.get('plex_adreca', '') or '').strip()
     if not adr:
-        nas = comu.adreca_nas() or ''
-        adr = (nas.split(':')[0] if nas else '192.168.0.27') + ':32400'
+        try:
+            nas = comu.adreca_nas()          # (ip, port) del Synology Drive, o None
+        except Exception:
+            nas = None
+        adr = (nas[0] if nas else '192.168.0.27') + ':32400'
     return tok, adr
 
 
