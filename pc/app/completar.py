@@ -458,6 +458,11 @@ def artista_de_etiquetes(d, arrel, artistes):
             et = etiqueta_mp3(a)
             if et.get('artista'):
                 break
+        if not et.get('artista'):
+            # els MP3 són «a demanda»: l'artista que porten els noms dels arxius («NoiseWorks - 01 - Simple Man»)
+            art_n = artista_de_noms(ruta, c, d.get('titol') or sa[1])
+            if art_n:
+                et = {'artista': art_n}
     except OSError:
         return False
     font = 'els arxius'
@@ -565,6 +570,30 @@ def posa_nom_identificat(d, arrel, artistes, motiu='reconeguda pels temes'):
     d.pop('ident_temes', None)
     log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» ({motiu})')
     return True
+
+
+NOM_AMB_ARTISTA = re.compile(r'^(.+?)\s+[-–—]\s+(?:(.+?)\s+[-–—]\s+)?(?:(?:CD|Disc)\s*\d{1,2}\s+[-–—]\s+)?\d{1,3}\s*[-–—.]\s*\S', re.I)
+
+
+def artista_de_noms(ruta, carpeta, titol):
+    """L'artista que porten els noms dels arxius de música («NoiseWorks - 01 - Simple Man.mp3» o «Noiseworks - Touch -
+    01 - Simple Man.mp3»), sense obrir-los: només si és el mateix a la majoria d'arxius i no és el títol del disc ni
+    el nom de la carpeta. Torna el nom o ''."""
+    noms = [os.path.splitext(f)[0] for _, _, fs in os.walk(ruta) for f in fs if os.path.splitext(f)[1].lower() in EXT]
+    if len(noms) < 2:
+        return ''
+    comptes = {}
+    for n in noms:
+        m = NOM_AMB_ARTISTA.match(n)
+        if m:
+            a = m.group(1).strip()
+            comptes.setdefault(N(a), [a, 0])[1] += 1
+    if not comptes:
+        return ''
+    k, (art, n) = max(comptes.items(), key=lambda x: x[1][1])
+    if n < 0.6 * len(noms) or not k or k in (N(carpeta), N(titol)) or re.match(r'^\d+$', k):
+        return ''
+    return art
 
 
 def posa_artista_carpeta(d, arrel, artistes):
@@ -1050,7 +1079,7 @@ def completa(d, artistes, estils_meus):
         try:
             temes_d = temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1 and t[1]] or temes_carpeta(d)
             d['id_temes'] = AVUI
-            dg = DG.cerca_per_temes(temes_d, d.get('any', ''))
+            dg = DG.cerca_per_temes(temes_d, d.get('any', ''), titol)
         except Exception as e:
             log(f'  Discogs (per temes): error {e!r}')
         if dg:
