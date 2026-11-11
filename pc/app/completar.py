@@ -527,11 +527,12 @@ def identificat_per_temes(d, dg, nom_art, artistes):
 
 def posa_nom_complet(d, arrel, artistes):
     """Carpeta amb un sol nom, sense guions («Noiseworks», «Days Of The New»): no se sap si és l'artista o el títol,
-    però quan el disc ja s'ha trobat a Discogs o MusicBrainz i la fitxa té l'any, passa a «Artista - Any - Títol» amb
+    però quan el disc ja s'ha trobat a Discogs (comprovat amb els temes) i la fitxa té l'any, passa a «Artista - Any - Títol» amb
     les dades de la fitxa (i després se'n formaten els arxius). Els recopilatoris («Varios») no es toquen."""
     c = d.get('carpeta') or ''
     fonts_d = d.get('fonts') or {}
-    if CARPETA.match(c) or SENSE_ANY.match(c) or not (fonts_d.get('Discogs') or fonts_d.get('MusicBrainz')):
+    # només si el disc de Discogs s'ha comprovat amb els temes de la carpeta (no el «Touch» d'un altre grup)
+    if CARPETA.match(c) or SENSE_ANY.match(c) or not fonts_d.get('Discogs') or not d.get('dg_ok'):
         return False
     if N(artistes.get(str(d.get('artista')), '')) in ('varios', 'various', 'variousartists', 'va'):
         return False
@@ -1017,6 +1018,8 @@ def completa(d, artistes, estils_meus):
         log(f"  Discogs: «{nom_art} - {titol}» de Discogs ({dg.get('url')}) té uns altres temes, no és aquest disc")
         treu_dades_dg(d, dg, auto, fonts_d)
         dg = None
+    elif dg:
+        d['dg_ok'] = True       # comprovat amb els temes: la carpeta ja es pot reanomenar amb aquestes dades
     # 1b. disc nou d'una carpeta del NAS que no s'ha trobat pel nom (la carpeta no porta l'artista o el títol bons):
     # es busca pels temes de dins (els noms dels arxius), un cop cada 30 dies
     if not dg and d.get('carpeta') and str(d.get('id', '')).startswith('nas') and 'Discogs' not in fonts_d \
