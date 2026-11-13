@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Funcions comunes de la Discoteca: rutes, lectura i escriptura segura de dades."""
+from difflib import SequenceMatcher
 import json, os, re, shutil, threading, time, unicodedata, configparser, datetime
 
 ARREL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # ...\Discoteca
@@ -287,6 +288,117 @@ def NT(s):
     s = re.sub(r'[\(\[]\s*(19|20)\d{2}\s*[\)\]]\s*$', '', s)       # «Dag With Shawn (2010)»
     s = ' '.join(NUMS.get(w, w) for w in re.findall(r'[a-z0-9]+', s))
     return N(s)
+
+
+# ------------------------------------------------------------------ identificació robusta (13/11/2026)
+# Norma de l'Ignasi: un disc s'ha de reconèixer pel títol, l'any i els noms dels temes encara que la carpeta o els
+# arxius estiguin escrits de qualsevol manera (espais, signes, majúscules, accents, claudàtors, «FLAC», «320»...).
+# Aquestes funcions només serveixen per COMPARAR i BUSCAR: no canvien res del que es mostra a la fitxa.
+_FORMAT = r'flac|mp3|aac|m4a|ogg|wav|ape|alac|lossless|hi-?res|web(?:-?rip)?|cd-?rip|vinyl-?rip|rip|vbr|cbr|v0|v2|' \
+          r'\d{2,4}\s*kbps|kbps|24\s*bits?|16\s*bits?|320|256|224|192|160|128'
+_FORMAT_FINAL = re.compile(r'(?:[\s\-–—_.]+|^)(?:' + _FORMAT + r')\s*$', re.I)
+_ANY_ENTRE = re.compile(r'\s*[\(\[]\s*((?:19|20)\d{2})\s*[\)\]]\s*')
+_GRUP_SOROLL = re.compile(r'\s*[\(\[][^\(\)\[\]]*\b(?:' + _FORMAT + r'|' + SOROLL + r')\b[^\(\)\[\]]*[\)\]]\s*', re.I)
+
+
+def nom_net(s, artista=False, the_davant=False):
+    """Un nom d'artista o de disc tal com ve d'una carpeta, sense el soroll: guions baixos, anys entre claudàtors o
+    parèntesis («[1978]», «(2020)»), etiquetes de format o de bitrate al final o entre claudàtors («FLAC», «320»,
+    «[MP3 320kbps]», «(Remastered)») i espais repetits. Per a l'artista, també l'any solt al principi o al final
+    («Magpie Salute 2018»); amb the_davant (només per buscar), «Magpie Salute, The» passa a «The Magpie Salute».
+    Torna (net, any). Si no en queda res, torna el nom original."""
+    orig = str(s or '').strip()
+    t, any_ = orig.replace('_', ' '), ''
+    m = _ANY_ENTRE.search(t)
+    while m:
+        any_ = any_ or m.group(1)
+        t = (t[:m.start()] + ' ' + t[m.end():]).strip()
+        m = _ANY_ENTRE.search(t)
+    t = _GRUP_SOROLL.sub(' ', t)
+    t = re.sub(r'\s+', ' ', t).strip(' -–—.')
+    while True:
+        m = _FORMAT_FINAL.search(t)
+        if not m or m.start() == 0:
+            break
+        t = t[:m.start()].strip(' -–—.')
+    if artista:
+        m = re.match(r'^((?:19|20)\d{2})\s+(?=\D)', t) or re.search(r'\s+((?:19|20)\d{2})$', t)
+        if m and len(t) - len(m.group(0)) >= 2:
+            any_ = any_ or m.group(1)
+            t = (t[:m.start()] + t[m.end():]).strip(' -–—.')
+        m = re.match(r'^(.+?),\s*the$', t, re.I) if the_davant else None
+        if m:
+            t = 'The ' + m.group(1).strip()
+    t = re.sub(r'\s+', ' ', t).strip(' -–—.')
+    return (t or orig), any_
+
+
+_NUM_INICI = re.compile(r'^[\(\[]?\d{1,3}(?:[-.]\d{1,3})?[\)\]]?(?:\s*[-–—.]\s*|\s+)(?=\S)')
+_PREFIXOS = (('claudators', re.compile(r'^\[([^\]]+)\]\s*(\S.*)$')),
+             ('guio', re.compile(r'^(.+?)\s+[-–—]\s+(\S.*)$')),
+             ('guio_junt', re.compile(r'^([^-–—]+?)\s*[-–—]\s*(\S.*)$')))
+
+
+def temes_nets(temes, titol=''):
+    """Els títols dels temes trets dels noms dels arxius, nets per buscar-los i comparar-los: sense el número de pista
+    que no s'havia pogut separar («(01) ...», «01-01 ...», «1-07 - ...»), sense guions baixos i sense el nom del grup
+    o del disc que porten davant tots els arxius («Dozer - Rising», «[California Breed] The Way»,
+    «the_magpie_salute-sooner_or_later»). Només es treu el que es repeteix a la majoria de temes (60 %), perquè un
+    tema que comença amb un número («99 Problems») o amb un guió es quedi igual.
+    Torna (temes, artista): l'artista és el nom repetit davant dels temes, si n'hi ha i no és el títol del disc."""
+    ts = [re.sub(r'\s+', ' ', str(t or '').replace('_', ' ')).strip() for t in temes or []]
+    ts = [t for t in ts if t]
+    n = len(ts)
+    if n == 0:
+        return [], ''
+    minim = max(2, int(0.6 * n + 0.999)) if n > 1 else 2
+    if sum(1 for t in ts if _NUM_INICI.match(t)) >= minim:
+        ts = [_NUM_INICI.sub('', t, count=1) if _NUM_INICI.match(t) else t for t in ts]
+    elif n == 1 and re.match(r'^[\(\[]?\d{1,3}(?:[-.]\d{1,3})?[\)\]]?\s+[-–—]\s+\S', ts[0]):
+        ts = [_NUM_INICI.sub('', ts[0], count=1)]       # un sol arxiu: «07 - Night Of The Thumpasorus Peoples»
+    artista = ''
+    for _ in range(2):          # «[Grup] Disc - Tema»: pot haver-hi dos prefixos seguits
+        millor = None
+        for tipus, rx in _PREFIXOS:
+            comptes = {}
+            for t in ts:
+                m = rx.match(t)
+                if m and N(m.group(1)):
+                    comptes.setdefault(N(m.group(1)), [m.group(1).strip(), 0])[1] += 1
+            for k, (nom, c) in comptes.items():
+                if c >= minim and (millor is None or c > millor[2]):
+                    millor = (rx, k, c, nom)
+        if not millor:
+            break
+        rx, k, _, nom = millor
+        ts = [rx.match(t).group(2).strip() if rx.match(t) and N(rx.match(t).group(1)) == k else t for t in ts]
+        if not artista and k != N(titol) and not re.match(r'^\d+$', k):
+            artista = nom
+    return ts, artista
+
+
+def TT(s):
+    """Clau d'un tema per comparar: com NT() però sense res del que va entre parèntesis o claudàtors
+    («Killing Time (Original Demo Version)» = «Killing Time», «Last Bandit (Live Electric)» = «Last Bandit»)."""
+    sense = re.sub(r'[\(\[][^\(\)\[\]]*[\)\]]', ' ', str(s or ''))
+    return NT(sense) or NT(s)
+
+
+def tema_igual(a, b):
+    """Dos títols de tema són el mateix tema: iguals o molt semblants (85 %), també sense el que va entre parèntesis."""
+    na, nb = NT(a), NT(b)
+    if not na or not nb:
+        return False
+    if na == nb or SequenceMatcher(None, na, nb).ratio() >= 0.85:
+        return True
+    ta, tb = TT(a), TT(b)
+    return len(ta) >= 3 and len(tb) >= 3 and (ta == tb or SequenceMatcher(None, ta, tb).ratio() >= 0.9)
+
+
+def temes_coincidents(meus, seus):
+    """Quants temes de `meus` són a `seus` (títols tal com vénen, sense normalitzar)."""
+    seus = [u for u in seus or [] if NT(u)]
+    return sum(1 for t in meus or [] if NT(t) and any(tema_igual(t, u) for u in seus))
 
 
 def marca_reanomena(abans, d):

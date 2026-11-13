@@ -319,6 +319,82 @@ def formata_arxius(d, arrel):
 SENSE_ANY = re.compile(r'^(.+?)\s+[-–—]\s+(.+)$')
 
 
+def parteix_carpeta(nom, net=True):
+    """El nom d'una carpeta del NAS -> (artista, any, títol). «Artista - Any - Títol» o «Artista - Títol»; si no porta
+    guió, l'artista i el títol són tota la carpeta (es trobarà l'artista pels arxius o per Discogs).
+    Amb net=True (norma del 13/11/2026) es treu el soroll de l'artista i del títol: anys entre claudàtors o parèntesis,
+    «FLAC», «320», guions baixos, «Magpie Salute, The 2017» -> «The Magpie Salute» (any 2017). Una carpeta que comença
+    amb l'any («2009 - Cycle Of Pain») es queda com abans: l'any fa d'artista fins que es troba el de veritat."""
+    m = CARPETA.match(nom) or re.match(r'^(.+?)\s*[-–—]\s*()(.+)$', nom)
+    art, any_, tit = (m.group(1).strip(), m.group(2), m.group(3).strip()) if m else (nom, '', nom)
+    # «Dag Nasty - Dag With Shawn (2010)»: l'any va a la fitxa i el títol queda net
+    t_net, any_p = comu.titol_net(tit)
+    if t_net and m:
+        tit, any_ = t_net, any_ or any_p
+    if not net:
+        return art, any_, tit
+    if m and not re.match(r'^\d{4}$', art):
+        a2, any_a = comu.nom_net(art, artista=True)
+        t2, any_t = comu.nom_net(tit)
+        art, tit, any_ = a2, t2, any_ or any_a or any_t
+    elif not m:
+        t2, any_t = comu.nom_net(nom)
+        art = tit = t2
+        any_ = any_t
+    elif m:
+        tit, any_t = comu.nom_net(tit)
+        any_ = any_ or any_t
+    return art, any_, tit
+
+
+def repara_pendents():
+    """Discos nous del NAS encara pendents i sense cap font, amb l'artista o el títol tal com venien de la carpeta amb
+    soroll («[1978] Rose Tattoo», «High Water I 320»): passen a l'artista, l'any i el títol nets i es tornen a buscar.
+    El primer cop (migració del 13/11/2026) tots els pendents sense fonts es tornen a provar de seguida, també per
+    temes, encara que s'hagin provat fa poc. Mai toca un disc que ja té fonts ni un artista o títol que hagis escrit tu."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        artistes = llegeix('artistes.json', {})
+        fetes = llegeix('migracions.json', {})
+        primer = not fetes.get('identificacio_robusta')
+        canvis = 0
+        for d in discs:
+            if d.get('estat') != 'pendent' or d.get('fonts') or not d.get('carpeta') \
+                    or not str(d.get('id', '')).startswith('nas'):
+                continue
+            canvi = False
+            nom = artistes.get(str(d.get('artista')), '')
+            a0, _, t0 = parteix_carpeta(d['carpeta'], net=False)
+            a1, any1, t1 = parteix_carpeta(d['carpeta'])
+            if 'titol' in (d.get('auto') or []) and not d.get('art_id3') and N(nom) == N(a0) and N(a1) != N(nom) \
+                    and not re.match(r'^\d{4}$', a1):
+                log(f"  Artista de la carpeta netejat: «{nom}» ara és «{a1}»")
+                d['art_vell'] = d.get('artista')
+                d['artista'] = id_artista(a1, artistes)
+                canvi = True
+            if 'titol' in (d.get('auto') or []) and NT(d.get('titol')) == NT(t0) and t1 != d.get('titol') and NT(t1):
+                log(f"  Títol de la carpeta netejat: «{d.get('titol')}» ara és «{t1}»")
+                d['titol'] = t1
+                canvi = True
+            if any1 and not d.get('any'):
+                d['any'] = any1
+                d['auto'] = sorted(set(d.get('auto', [])) | {'any'})
+                canvi = True
+            if canvi or primer:
+                for k in ('no_trobat', 'proc', 'id_temes', 'art_dg'):
+                    d.pop(k, None)
+                d['reintenta'] = True
+                canvis += 1
+        if canvis:
+            desa('discs.json', discs)
+        if primer:
+            fetes['identificacio_robusta'] = AVUI
+            desa('migracions.json', fetes)
+    if canvis:
+        log(f'Pendents: {canvis} discos nous es tornen a buscar amb el nom de la carpeta net')
+    return canvis
+
+
 def neteja_titol_nou(d):
     """Disc nou encara sense fonts amb el títol tal com venia a la carpeta («Dag With Shawn (2010)», «Can I Say
     (Reissue)»): el títol queda net, l'any va a la fitxa i es torna a buscar. Només si el títol el va posar el
@@ -448,7 +524,8 @@ def artista_de_etiquetes(d, arrel, artistes):
     nom = artistes.get(str(d.get('artista')), '')
     # només si l'artista de la fitxa és el que es va treure del nom de la carpeta (l'any o la carpeta sencera) i
     # encara no s'ha trobat a cap font d'internet (els recopilatoris «Varios» ja tenen fonts i no es toquen)
-    if not sa or d.get('art_id3') or d.get('fonts') or N(nom) not in (N(sa[0]), N(c)) or cancons_soltes(nom, sa[1]):
+    if not sa or d.get('art_id3') or d.get('fonts') or N(nom) not in (N(sa[0]), N(c), N(comu.nom_net(c)[0])) \
+            or cancons_soltes(nom, sa[1]):
         return False
     ruta = os.path.join(arrel, c)
     try:
@@ -471,7 +548,8 @@ def artista_de_etiquetes(d, arrel, artistes):
         # (només el títol exacte, del mateix any i amb la majoria de temes iguals; un cop cada 30 dies)
         d['art_dg'] = AVUI
         temes = [t[1] for t in d.get('temes') or [] if len(t) > 1 and t[1]] or temes_carpeta(d)
-        art_dg = DG.artista_per_titol(sa[1] if sa[0] else (d.get('titol') or sa[1]), temes, sa[0])
+        temes = comu.temes_nets(temes, d.get('titol') or sa[1])[0] or temes
+        art_dg = DG.artista_per_titol(sa[1] if sa[0] else (d.get('titol') or sa[1]), temes, sa[0] or str(d.get('any') or ''))
         if art_dg:
             et, font = {'artista': art_dg}, 'Discogs'
     art = majuscules(nom_carpeta(et.get('artista', '')))
@@ -503,7 +581,7 @@ def dg_provat(d, camp='art_dg'):
         return False
 
 
-def identificat_per_temes(d, dg, nom_art, artistes):
+def identificat_per_temes(d, dg, nom_art, artistes, motiu='pels temes de la carpeta'):
     """Disc nou que no s'ha trobat pel nom de la carpeta, però sí pels temes de dins (`Discogs.cerca_per_temes`):
     l'artista i el títol que havia tret el programa del nom de la carpeta passen a ser els de Discogs, i la carpeta
     es reanomenarà a «Artista - Any - Títol» (`posa_nom_identificat`, només amb el NAS connectat). Els anteriors es
@@ -521,7 +599,7 @@ def identificat_per_temes(d, dg, nom_art, artistes):
         d.setdefault('titol_abans', vell_t)
         d['titol'] = tit
     d['ident_temes'] = True
-    log(f"  Reconegut pels temes de la carpeta «{d.get('carpeta', '')}»: és «{art} - {d.get('titol', '')}» (Discogs)")
+    log(f"  Reconegut {motiu} «{d.get('carpeta', '')}»: és «{art} - {d.get('titol', '')}» (Discogs)")
     try:
         with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
             f.write(f"{AVUI}\ttemes\t{nom_art} - {vell_t}\t{art} - {d.get('titol', '')}\t{d.get('carpeta', '')}\n")
@@ -960,10 +1038,10 @@ def mb_encaixa(mb, d, dg, temes_d):
     """MusicBrainz només busca per artista i títol, i hi ha artistes que es diuen igual (el «Borracho» de la maqueta
     de 1994 i el grup d'stoner de Washington). El disc trobat només es fa servir si s'hi assembla: almenys la meitat
     dels temes iguals o, si no hi ha temes per comparar, el mateix any que la fitxa o que Discogs."""
-    meus = {NT(t) for t in temes_d or [] if NT(t)}
-    seus = {NT(t.get('titol')) for t in mb.get('temes') or [] if NT(t.get('titol'))}
+    meus = list(dict.fromkeys(t for t in temes_d or [] if NT(t)))
+    seus = [t.get('titol') for t in mb.get('temes') or [] if NT(t.get('titol'))]
     if meus and seus:
-        return len(meus & seus) >= max(1, min(len(meus), len(seus)) // 2)
+        return comu.temes_coincidents(meus, seus) >= max(1, min(len(meus), len(seus)) // 2)
     anys = {str(d.get('any') or '')[:4], str((dg or {}).get('any') or '')[:4]} - {''}
     if anys and mb.get('any'):
         return mb['any'] in anys
@@ -982,12 +1060,31 @@ def cancons_soltes(nom_art, titol):
 def dg_encaixa(dg, temes_d):
     """El disc de Discogs trobat per artista i títol és el de la carpeta: almenys la meitat dels temes iguals (o
     molt semblants). Si no hi ha prou temes per comparar (menys de 3), es dona per bo."""
-    meus = [NT(t) for t in temes_d or [] if NT(t)]
-    seus = [NT(t.get('titol')) for t in dg.get('temes') or [] if NT(t.get('titol'))]
+    meus = [t for t in temes_d or [] if NT(t)]
+    seus = [t.get('titol') for t in dg.get('temes') or [] if NT(t.get('titol'))]
     if len(meus) < 3 or not seus:
         return True
-    iguals = sum(1 for t in meus if any(t == u or SequenceMatcher(None, t, u).ratio() >= 0.85 for u in seus))
+    iguals = comu.temes_coincidents(meus, seus)
     return iguals >= max(2, min(len(meus), len(seus)) // 2)
+
+
+def variants_cerca(nom_art, titol, art_temes):
+    """Altres maneres de buscar un disc nou del NAS que no s'ha trobat tal com ve la carpeta (norma del 13/11/2026):
+    l'artista i el títol nets de soroll («[1978] Rose Tattoo» -> «Rose Tattoo», «Magpie Salute, The 2017» -> «The
+    Magpie Salute», «High Water I 320» -> «High Water I») i l'artista que porten davant els noms dels arxius («Dozer -
+    Rising»). Torna una llista de (artista, títol) diferents de la primera cerca, com a màxim 4."""
+    a_net = comu.nom_net(nom_art, artista=True, the_davant=True)[0]
+    t_net = comu.nom_net(titol)[0]
+    vist = {(N(nom_art), NT(titol))}
+    out = []
+    for a in (a_net, art_temes, nom_art):
+        for t in (t_net, titol):
+            k = (N(a), NT(t))
+            if not k[0] or not k[1] or re.match(r'^\d{4}$', k[0]) or k in vist:
+                continue
+            vist.add(k)
+            out.append((a, t))
+    return out[:4]
 
 
 def treu_dades_dg(d, dg, auto, fonts_d):
@@ -1054,32 +1151,54 @@ def completa(d, artistes, estils_meus):
     # 1. Discogs: per codi de barres o número de catàleg si en tenim; si no, per artista i títol
     dg = None
     temes_d = []
+    nas_nou = str(d.get('id', '')).startswith('nas') and not (d.get('barcode') or d.get('catno'))
+    temes_crus = [t[1] for t in d.get('temes', []) if len(t) > 1] or temes_carpeta(d)
+    # els temes nets per buscar i comparar: sense números de pista ni el nom del grup davant («Dozer - Rising»)
+    temes_nets, art_temes = comu.temes_nets(temes_crus, titol)
+    variant = None
     try:
         if d.get('barcode') or d.get('catno'):
             dg = DG.per_codi(d.get('barcode'), None if d.get('barcode') else d.get('catno'))
         if not dg and nom_art and titol:
-            temes_d = [t[1] for t in d.get('temes', []) if len(t) > 1] or temes_carpeta(d)
+            temes_d = temes_crus
             dg = DG.cerca(nom_art, titol, d.get('any', ''), temes_d) or DG.cerca_aprox(nom_art, titol, temes_d, d.get('any', '')) \
                 or DG.cerca_relacionat(nom_art, titol, d.get('any', ''))
     except Exception as e:
         log(f'  Discogs: error {e!r}')
     # 1a. disc nou del NAS: el de Discogs trobat pel nom només serveix si té els mateixos temes que la carpeta (la
-    # carpeta «Touch» de Noiseworks i el «Touch» del grup austríac Touch, 11/11/2026)
-    if dg and not dg.get('aprox') and not (d.get('barcode') or d.get('catno')) and str(d.get('id', '')).startswith('nas') \
-            and not dg_encaixa(dg, temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1]):
+    # carpeta «Touch» de Noiseworks i el «Touch» del grup austríac Touch, 11/11/2026). Es comparen els temes tal com
+    # són i també nets («Dozer - Rising» = «Rising»).
+    encaixa = lambda x: x.get('aprox') or dg_encaixa(x, temes_nets) or dg_encaixa(x, temes_crus)
+    if dg and nas_nou and not encaixa(dg):
         log(f"  Discogs: «{nom_art} - {titol}» de Discogs ({dg.get('url')}) té uns altres temes, no és aquest disc")
         treu_dades_dg(d, dg, auto, fonts_d)
         dg = None
-    elif dg:
+    # 1a'. disc nou del NAS que no s'ha trobat tal com ve la carpeta: es busca amb l'artista i el títol nets de soroll
+    # i amb l'artista que porten davant els noms dels arxius (norma del 13/11/2026)
+    if not dg and nas_nou and nom_art and titol and 'Discogs' not in fonts_d:
+        for a, t in variants_cerca(nom_art, titol, art_temes):
+            try:
+                x = DG.cerca(a, t, d.get('any', ''), temes_nets) or DG.cerca_aprox(a, t, temes_nets, d.get('any', ''))
+            except Exception as e:
+                log(f'  Discogs: error {e!r}')
+                break
+            if x and encaixa(x):
+                dg, variant = x, (a, t)
+                break
+    if dg:
         d['dg_ok'] = True       # comprovat amb els temes: la carpeta ja es pot reanomenar amb aquestes dades
+    if dg and variant:
+        nom_art, titol = identificat_per_temes(d, dg, nom_art, artistes, 'netejant el nom de la carpeta')
+        auto |= {'artista', 'titol'}
+        canvis.append('titol')
+        dg.pop('aprox', None)
     # 1b. disc nou d'una carpeta del NAS que no s'ha trobat pel nom (la carpeta no porta l'artista o el títol bons):
     # es busca pels temes de dins (els noms dels arxius), un cop cada 30 dies
     if not dg and d.get('carpeta') and str(d.get('id', '')).startswith('nas') and 'Discogs' not in fonts_d \
             and 'titol' in auto and not dg_provat(d, 'id_temes'):
         try:
-            temes_d = temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1 and t[1]] or temes_carpeta(d)
             d['id_temes'] = AVUI
-            dg = DG.cerca_per_temes(temes_d, d.get('any', ''), titol)
+            dg = DG.cerca_per_temes(temes_nets or [t for t in temes_crus if t], d.get('any', ''), comu.nom_net(titol)[0], art_temes)
         except Exception as e:
             log(f'  Discogs (per temes): error {e!r}')
         if dg:
@@ -1118,7 +1237,7 @@ def completa(d, artistes, estils_meus):
             mb = fonts.musicbrainz(nom_art, titol)
         except Exception as e:
             log(f'  MusicBrainz: error {e!r}')
-    if mb and not mb_encaixa(mb, d, dg, temes_d or [t[1] for t in d.get('temes', []) if len(t) > 1]):
+    if mb and not mb_encaixa(mb, d, dg, temes_nets or temes_crus):
         # un altre artista amb el mateix nom («Borracho»): ni l'enllaç ni les seves dades
         log(f"  MusicBrainz: el disc que hi ha ({mb['url']}) no és aquest (temes o any diferents), no es fa servir")
         treu_dades_mb(d, mb, dg, auto, fonts_d, estils_meus)
@@ -2033,12 +2152,17 @@ def elimina_duplicats():
         for i, d in enumerate(discs):
             blocs.setdefault('t' + net_titol(d.get('titol'))[:4], []).append(i)
             blocs.setdefault('a' + N(nom(d))[:4], []).append(i)
+            # i pel primer tema (net): la fitxa vella d'una carpeta reanomenada pot tenir l'artista i el títol del tot diferents
+            tn = comu.temes_nets([t[1] for t in d.get('temes') or [] if len(t) > 1])[0]
+            if tn and d.get('carpeta'):
+                blocs.setdefault('p' + comu.TT(tn[0])[:12], []).append(i)
         for L in blocs.values():
             for x in range(len(L)):
                 for y in range(x + 1, len(L)):
                     a, b = discs[L[x]], discs[L[y]]
                     if arrel_de(L[x]) != arrel_de(L[y]) and (mateix_disc(nom(a), a.get('titol'), nom(b), b.get('titol'))
-                                                           or mateix_contingut(nom(a), a, nom(b), b)):
+                                                           or mateix_contingut(nom(a), a, nom(b), b)
+                                                           or carpeta_moguda(a, b, al_nas)):
                         pare[arrel_de(L[x])] = arrel_de(L[y])
         grups = {}
         for i, d in enumerate(discs):
@@ -2057,6 +2181,7 @@ def elimina_duplicats():
             w = g[0]
             noms_abans = [f"«{nom(x)} - {x.get('titol', '')}»" for x in g]
             for x in g[1:]:
+                passa_estrelles(x, w)
                 auto_w, auto_x = set(w.get('auto') or []), set(x.get('auto') or [])
                 for c in CAMPS_MEUS:
                     if not x.get(c):
@@ -2120,6 +2245,43 @@ def mateixos_temes(vells, nous):
     v = {N(t[1]) for t in vells or [] if len(t) > 1 and N(t[1])}
     n = {N(t[1]) for t in nous or [] if len(t) > 1 and N(t[1])}
     return len(v) >= 3 and len(v & n) >= 0.8 * len(v)
+
+
+def temes_equivalents(t1, t2):
+    """Dues llistes de temes (de la fitxa, [n, títol, ...]) són el mateix disc encara que l'artista i el títol estiguin
+    escrits de qualsevol manera: com a mínim 3 temes i el 80 % dels de cada llista són a l'altra (comparats nets,
+    sense números, guions baixos ni el nom del grup davant). Norma del 13/11/2026."""
+    a = comu.temes_nets([t[1] for t in t1 or [] if len(t) > 1])[0]
+    b = comu.temes_nets([t[1] for t in t2 or [] if len(t) > 1])[0]
+    if len(a) < 3 or len(b) < 3:
+        return False
+    return comu.temes_coincidents(a, b) >= 0.8 * len(a) and comu.temes_coincidents(b, a) >= 0.8 * len(b)
+
+
+def carpeta_moguda(d1, d2, al_nas):
+    """Fitxa vella d'una carpeta que ja no és al NAS (l'has reanomenada a mà: «[1978] Rose Tattoo - Rose Tattoo» ->
+    «Rose Tattoo - Rose Tattoo») i fitxa nova de la carpeta que hi ha ara, amb els mateixos temes: són el mateix disc.
+    Només si una de les dues carpetes existeix i l'altra no (dues carpetes que existeixen són dos discos)."""
+    c1, c2 = d1.get('carpeta'), d2.get('carpeta')
+    if len(al_nas) < 100 or not c1 or not c2 or (c1 in al_nas) == (c2 in al_nas):
+        return False
+    return temes_equivalents(d1.get('temes'), d2.get('temes'))
+
+
+def passa_estrelles(x, w):
+    """Les estrelles (★) dels temes de la fitxa que se'n va passen als mateixos temes de la que es queda."""
+    tw = [destacat(t) for t in w.get('temes') or []]
+    canvi = False
+    for t in x.get('temes') or []:
+        t = destacat(t)
+        if not t[6]:
+            continue
+        o = next((u for u in tw if comu.tema_igual(u[1], t[1])), None)
+        if o is not None and not o[6]:
+            o[6] = t[6]
+            canvi = True
+    if canvi:
+        w['temes'] = tw
 
 
 MARCA_TITOL = re.compile(r'[\s\-–—(\[]*\b(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\s*[)\]]?\s*$', re.I)
@@ -2219,17 +2381,13 @@ def llegeix_nas():
         arxius = arxius_de(e.path)          # només llista noms
         if not arxius:
             continue
-        m = re.match(r'^(.+?)\s*[-–—]\s*(\d{4})\s*[-–—]\s*(.+)$', e.name) or re.match(r'^(.+?)\s*[-–—]\s*()(.+)$', e.name)
-        art, any_, tit = (m.group(1).strip(), m.group(2), m.group(3).strip()) if m else (e.name, '', e.name)
-        # «Dag Nasty - Dag With Shawn (2010)»: l'any va a la fitxa i el títol queda net
-        net, any_p = comu.titol_net(tit)
-        if net and m:
-            tit, any_ = net, any_ or any_p
+        art, any_, tit = parteix_carpeta(e.name)
         sup = sorted({EXT[os.path.splitext(f)[1].lower()] for _, f in arxius})
         # carpeta reanomenada? el disc antic passa a apuntar a la nova i agafa els noms corregits
         vell = next((x for x in orfes if mateix_disc(artistes.get(str(x['artista']), ''), x.get('titol'), art, tit)), None) \
             or next((x for x in orfes if N(artistes.get(str(x['artista']), '')) == N(art)
-                     and mateixos_temes(x.get('temes'), temes_de_noms(arxius))), None)
+                     and mateixos_temes(x.get('temes'), temes_de_noms(arxius))), None) \
+            or next((x for x in orfes if temes_equivalents(x.get('temes'), temes_de_noms(arxius))), None)
         if vell:
             orfes.remove(vell)
             antic = f"{artistes.get(str(vell['artista']), '')} - {vell.get('titol', '')}"
@@ -2551,6 +2709,11 @@ def main():
         except Exception as e:
             log(f'AllMusic: error {e!r}')
         fets = 0
+        if a.mode in ('nit', 'tot', 'pendents'):
+            try:
+                repara_pendents()
+            except Exception as e:
+                log(f'Pendents: error netejant noms {e!r}')
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)
             # els discos nous ja tenen l'any: la carpeta passa a «Artista - Any - Títol» i els arxius, al format
