@@ -14,7 +14,8 @@ from comu import N, NT, log
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/130.0 Safari/537.36')
 _ultim = {}
-PAUSA = {'www.allmusic.com': 2.0, 'api.discogs.com': 1.2, 'www.discogs.com': 3.0,
+API_RITME = ('api.discogs.com', 'musicbrainz.org', 'ws.audioscrobbler.com', 'coverartarchive.org')
+PAUSA = {'www.allmusic.com': 2.0, 'api.discogs.com': 1.05, 'www.discogs.com': 3.0,
          'ws.audioscrobbler.com': 0.25, 'music.apple.com': 2.0,
          'musicbrainz.org': 1.1, 'coverartarchive.org': 0.5}
 
@@ -40,7 +41,8 @@ def get(url, headers=None, json_=False, binari=False, intents=3):
     host = urllib.parse.urlparse(url).netloc
     espera = PAUSA.get(host, 1.0) - (time.time() - _ultim.get(host, 0))
     if espera > 0:
-        time.sleep(espera + random.random() * 0.5)
+        # les API (Discogs, MusicBrainz, Last.fm) només demanen un ritme màxim; l'espera a l'atzar és per a les webs
+        time.sleep(espera + (0 if host in API_RITME else random.random() * 0.5))
     h = {'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'}
     h.update(headers or {})
     for i in range(intents):
@@ -269,10 +271,24 @@ def _pistes(tracklist):
 class Discogs:
     def __init__(self, token):
         self.h = {'Authorization': f'Discogs token={token}'} if token else {}
+        self._cache = {}
+        self.sense_recomanacions = False
 
     def api(self, path, **q):
+        """Una consulta a l'API de Discogs. La mateixa consulta (la mateixa cerca, edició o versió principal) es demana
+        moltes vegades mentre es busca un disc de diverses maneres: la resposta es guarda una hora i no es torna a
+        demanar (cada consulta estalviada és més d'un segon)."""
         url = DAPI + path + ('?' + urllib.parse.urlencode(q) if q else '')
-        return get(url, headers=self.h, json_=True)
+        ara = time.time()
+        c = self._cache.get(url)
+        if c and ara - c[0] < 3600:
+            return c[1]
+        r = get(url, headers=self.h, json_=True)
+        if r is not None:
+            if len(self._cache) > 3000:
+                self._cache.clear()
+            self._cache[url] = (ara, r)
+        return r
 
     def per_codi(self, barcode=None, catno=None):
         q = {'type': 'release'}
@@ -534,8 +550,15 @@ class Discogs:
         bons.sort(key=lambda b: b[0], reverse=True)
         millor = bons[0]
         # un altre disc (no una altra edició del mateix) que hi encaixa gairebé igual de bé: no es pot saber quin és
-        if any(millor[0][0] - b[0][0] < 0.1 and (N(b[1]['artista']), NT(b[1]['titol'])) != (N(millor[1]['artista']), NT(millor[1]['titol']))
-               for b in bons[1:]):
+        # (una altra fitxa del mateix disc a Discogs, amb el nom escrit diferent i els mateixos temes, no hi compta:
+        # «Atom Smash - Love Is In The Missile» i «Atomsmash - Love is in the Missle», 13/11/2026)
+        def mateix(b):
+            if (N(b['artista']), NT(b['titol'])) == (N(millor[1]['artista']), NT(millor[1]['titol'])):
+                return True
+            t1 = [x['titol'] for x in millor[1]['temes'] if NT(x['titol'])]
+            t2 = [x['titol'] for x in b['temes'] if NT(x['titol'])]
+            return len(t1) >= 3 and comu.temes_coincidents(t1, t2) >= 0.8 * len(t1) and comu.temes_coincidents(t2, t1) >= 0.8 * len(t2)
+        if any(millor[0][0] - b[0][0] < 0.1 and not mateix(b[1]) for b in bons[1:]):
             return None
         millor[1]['per_temes'] = True
         return millor[1]
@@ -569,10 +592,13 @@ class Discogs:
 
     def recomanacions(self, release_id):
         """Llegeix l'apartat «Recommendations» de la pàgina web de l'edició."""
+        if self.sense_recomanacions:
+            return []       # la web de Discogs ja ha dit que no en aquesta execució: no s'hi perd més temps
         try:
             s = sopa(f'https://www.discogs.com/release/{release_id}')
         except Exception as e:
-            log(f'  Discogs no deixa llegir les recomanacions ({e})')
+            log(f'  Discogs no deixa llegir les recomanacions ({e}); no es torna a provar fins a la propera execució')
+            self.sense_recomanacions = True
             return []
         out = []
         for li in (s.select('#release-recommendations li') if s else []):

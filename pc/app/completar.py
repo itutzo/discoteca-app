@@ -1185,6 +1185,23 @@ def completa(d, artistes, estils_meus):
             if x and encaixa(x):
                 dg, variant = x, (a, t)
                 break
+    # 1a''. carpeta sense l'artista («2010 - Love Is In The Missile», «Mothership Connection [1975]»): l'artista es
+    # busca a Discogs pel títol, l'any i els temes aquí mateix, sense esperar que el NAS estigui connectat (abans només
+    # es feia a formata_tots(), que no fa res sense connexió; 13/11/2026). Un cop cada 30 dies (camp art_dg).
+    if not dg and nas_nou and titol and 'Discogs' not in fonts_d and 'titol' in auto and not d.get('art_id3') \
+            and not dg_provat(d) and not cancons_soltes(nom_art, titol):
+        sa = sense_artista(d.get('carpeta') or '')
+        c = d.get('carpeta') or ''
+        if sa and N(nom_art) in (N(sa[0]), N(c), N(comu.nom_net(c)[0])):
+            d['art_dg'] = AVUI
+            try:
+                t_net = comu.nom_net(titol)[0]
+                a = DG.artista_per_titol(t_net, temes_nets, sa[0] or str(d.get('any') or ''))
+                x = DG.cerca(a, t_net, d.get('any', ''), temes_nets) if a else None
+                if x and encaixa(x):
+                    dg, variant = x, (a, t_net)
+            except Exception as e:
+                log(f'  Discogs (artista pel títol): error {e!r}')
     if dg:
         d['dg_ok'] = True       # comprovat amb els temes: la carpeta ja es pot reanomenar amb aquestes dades
     if dg and variant:
