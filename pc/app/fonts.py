@@ -254,6 +254,18 @@ TEMES_IGUALS = 0.6       # ... i com a mínim el 60 % dels temes iguals
 SEMBLANCA_SENSE_TEMES = 0.9   # entrada sense temes (l'Access): títol com a mínim un 90 % semblant, el mateix any i un sol candidat
 
 
+def _pistes(tracklist):
+    """Els temes d'una edició de Discogs. Alguns discos agrupen els temes en apartats («index»: «Storm», «Static»...
+    a Godspeed You! Black Emperor) i els temes de veritat són a dins (sub_tracks)."""
+    out = []
+    for t in tracklist or []:
+        if t.get('type_') == 'track':
+            out.append(t)
+        elif t.get('type_') == 'index':
+            out += [x for x in t.get('sub_tracks') or [] if x.get('type_', 'track') == 'track']
+    return out
+
+
 class Discogs:
     def __init__(self, token):
         self.h = {'Authorization': f'Discogs token={token}'} if token else {}
@@ -283,6 +295,7 @@ class Discogs:
         art_ok = lambda nom: bool(N(nom)) and (N(artista) in N(nom) or N(nom) in N(artista))
         any_ = str(any_ or '')[:4]
         meus = {NT(t) for t in (temes or []) if NT(t)}
+        temes_l = [t for t in (temes or []) if NT(t)]
         candidats, vist = [], set()
         # «Hips & Makers» a la carpeta i «Hips And Makers» a Discogs (o al revés): es busquen totes dues formes
         titols = [titol]
@@ -324,7 +337,7 @@ class Discogs:
                 rel = self.release(x['id'])
             if not rel:
                 continue
-            iguals = len(meus & {NT(t['titol']) for t in rel['temes']})
+            iguals = comu.temes_coincidents(temes_l, [t['titol'] for t in rel['temes']])
             punts = (iguals, str(x.get('year') or rel.get('any') or '') == any_)
             if millor is None or punts > punts_millor:
                 millor, punts_millor = rel, punts
@@ -377,8 +390,8 @@ class Discogs:
                         rel['aprox'] = round(s, 2)
                         return rel
                     continue
-                seus = [NT(t['titol']) for t in rel['temes'] if NT(t['titol'])]
-                iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
+                seus = [t['titol'] for t in rel['temes'] if NT(t['titol'])]
+                iguals = comu.temes_coincidents([t for t in (temes or []) if NT(t)], seus)
                 if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
                     rel['aprox'] = round(s, 2)
                     return rel
@@ -425,7 +438,7 @@ class Discogs:
         Discogs), és de l'any de la carpeta (si en porta) i un sol artista hi encaixa. Torna el nom o ''."""
         meus = [NT(t) for t in (temes or []) if NT(t)]
         any_ = str(any_ or '')[:4]
-        if len(meus) < 3 or len(NT(titol)) < 3:
+        if not meus or len(NT(titol)) < 3 or (len(meus) < 3 and not any_):
             return ''
         semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
         cands, vist = [], set()
@@ -451,13 +464,16 @@ class Discogs:
                 continue
             if any_ and any_ not in {str(x.get('year') or '')[:4], str(rel.get('any') or '')[:4]}:
                 continue
-            seus = [NT(t['titol']) for t in rel['temes'] if NT(t['titol'])]
-            iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
-            if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
+            seus = [t['titol'] for t in rel['temes'] if NT(t['titol'])]
+            iguals = comu.temes_coincidents([t for t in (temes or []) if NT(t)], seus)
+            # amb pocs arxius (un disc incomplet: «Mothership Connection [1975]» amb un sol tema), cal l'any de la
+            # carpeta i que tots els temes de la carpeta siguin al disc
+            poques = len(meus) < 3 and iguals == len(meus)
+            if poques or (iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus)):
                 bons.append(re.sub(r'\s*\(\d+\)$', '', rel.get('artista') or art_x).strip())
         return bons[0] if len({N(b) for b in bons}) == 1 else ''
 
-    def cerca_per_temes(self, temes, any_='', titol=''):
+    def cerca_per_temes(self, temes, any_='', titol='', artista=''):
         """Per a una carpeta que no porta ni l'artista ni el títol bons («Nova carpeta», «CD1», «1989 - Disc»): busca a
         Discogs els discos que tenen els temes més característics de la carpeta (els noms dels arxius, sense obrir-los)
         i en dona l'edició només si hi coincideix la majoria de temes (3 o més, el 60 % dels de la carpeta i el 60 %
@@ -471,12 +487,18 @@ class Discogs:
         # els temes més característics: els títols més llargs que no són genèrics («Intro», «Untitled»)
         noms = [t for t in (temes or []) if NT(t) and not generics.match(NT(t))]
         noms = sorted(dict.fromkeys(noms), key=lambda t: -len(NT(t)))[:4]
+        # es busca el nom del tema sense el que va entre parèntesis («Last Bandit (Live Electric)» -> «Last Bandit»)
+        noms = [re.sub(r'\s*[\(\[][^\(\)\[\]]*[\)\]]', ' ', t).strip() or t for t in noms]
         punts, mostra = {}, {}
         # amb el títol de la carpeta («Touch»), la cerca de cada tema es limita als discos que es diuen així: un tema
         # amb un nom corrent («Tell It Like It Is») surt a centenars de discos i el bo pot quedar fora dels resultats
         consultes = [{'track': t} for t in noms]
         if NT(titol):
             consultes = [{'track': t, 'release_title': titol} for t in noms] + consultes
+        # l'artista que porten davant els noms dels arxius («01-01 Tyla's Dogs d'Amour - Last Bandit»): els temes d'un
+        # grup surten a molts discos seus (recopilatoris, directes) i el bo pot quedar fora dels 100 primers resultats
+        if N(artista):
+            consultes = [{'track': t, 'artist': artista} for t in noms] + consultes
         for q in consultes:
             r = self.api('/database/search', type='release', per_page=100, **q) or {}
             vistos = set()
@@ -501,8 +523,8 @@ class Discogs:
                 rel = self.release(k[1])
             if not rel:
                 continue
-            seus = [NT(x['titol']) for x in rel['temes'] if NT(x['titol'])]
-            iguals = sum(1 for t in meus if any(t == u or semblant(t, u) >= 0.85 for u in seus))
+            seus = [x['titol'] for x in rel['temes'] if NT(x['titol'])]
+            iguals = comu.temes_coincidents([t for t in (temes or []) if NT(t)], seus)
             if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
                 anys = {str((rel.get('master') or {}).get('year') or '')[:4], str(rel.get('any') or '')[:4]}
                 # el que s'assembla més en conjunt: un recopilatori amb els mateixos temes i molts més queda per sota
@@ -536,7 +558,7 @@ class Discogs:
                'temes': [{'n': t.get('position', ''), 'titol': t.get('title', ''), 'durada': t.get('duration', ''),
                           'compositors': [re.sub(r'\s*\(\d+\)$', '', e['name']) for e in t.get('extraartists', [])
                                           if re.search(r'Written|Composed|Songwriter|Music By|Lyrics', e.get('role', ''), re.I)]}
-                         for t in rel.get('tracklist', []) if t.get('type_') == 'track']}
+                         for t in _pistes(rel.get('tracklist', []))]}
         return out
 
     def membres(self, artista_id):
