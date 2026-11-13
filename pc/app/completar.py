@@ -427,9 +427,17 @@ def posa_any_carpeta(d, arrel):
     # «Dag With Shawn (2010)» -> «Dag With Shawn» si l'any és el del disc; «MCMLXXXV (1985)» (Rufio, 2003) es queda
     net, any_p = comu.titol_net(m.group(2))
     tit = net if net and (not any_p or any_p == any_) else m.group(2)
-    art, tit = nom_carpeta(m.group(1)), majuscules(nom_carpeta(tit))
+    # l'artista i el títol de la carpeta, nets de soroll («Magpie Salute, the 2017 - The magpipe Salute  FLAC» havia
+    # quedat «Magpie Salute, the 2017 - 2017 - The Magpipe Salute FLAC», 13/11/2026); si el programa n'ha corregit el
+    # títol mal escrit a la fitxa, la carpeta porta el títol bo
+    art = comu.nom_net(m.group(1), artista=True)[0]
+    if not any_p or any_p == any_:      # «MCMLXXXV (1985)» (Rufio, 2003): l'any entre parèntesis és part del títol
+        tit = comu.nom_net(tit)[0]
+    if d.get('titol') and d.get('titol_abans') and NT(comu.nom_net(d['titol_abans'])[0]) == NT(tit):
+        tit = d['titol']
+    art, tit = nom_carpeta(art), majuscules(nom_carpeta(tit))
     nou = f'{art} - {any_} - {tit}'
-    if not art or not tit or not os.path.isdir(os.path.join(arrel, c)):
+    if not art or not tit or re.match(r'^\d{4}$', art) or not os.path.isdir(os.path.join(arrel, c)):
         return False
     if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
         log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
