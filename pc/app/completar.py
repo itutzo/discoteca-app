@@ -2179,7 +2179,7 @@ def elimina_duplicats():
                     a, b = discs[L[x]], discs[L[y]]
                     if arrel_de(L[x]) != arrel_de(L[y]) and (mateix_disc(nom(a), a.get('titol'), nom(b), b.get('titol'))
                                                            or mateix_contingut(nom(a), a, nom(b), b)
-                                                           or carpeta_moguda(a, b, al_nas)):
+                                                           or carpeta_moguda(a, b, al_nas)) and not discs_diferents(a, b, al_nas):
                         pare[arrel_de(L[x])] = arrel_de(L[y])
         grups = {}
         for i, d in enumerate(discs):
@@ -2283,6 +2283,18 @@ def carpeta_moguda(d1, d2, al_nas):
     if len(al_nas) < 100 or not c1 or not c2 or (c1 in al_nas) == (c2 in al_nas):
         return False
     return temes_equivalents(d1.get('temes'), d2.get('temes'))
+
+
+def discs_diferents(d1, d2, al_nas):
+    """Dues fitxes amb el mateix artista i el mateix títol que NO són el mateix disc: totes dues tenen la seva carpeta
+    al NAS i els temes són uns altres. Hi ha grups amb diversos discos que es diuen igual (The Spits en té quatre que
+    es diuen «The Spits»; Weezer, Peter Gabriel...): mai s'ajunten (13/11/2026)."""
+    c1, c2 = d1.get('carpeta'), d2.get('carpeta')
+    if not c1 or not c2 or c1 == c2 or c1 not in al_nas or c2 not in al_nas:
+        return False
+    if len(d1.get('temes') or []) < 3 or len(d2.get('temes') or []) < 3:
+        return False
+    return not temes_equivalents(d1.get('temes'), d2.get('temes'))
 
 
 def passa_estrelles(x, w):

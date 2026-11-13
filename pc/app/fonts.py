@@ -64,6 +64,13 @@ def get(url, headers=None, json_=False, binari=False, intents=3):
             if code == 404:
                 return None
             if code in (429, 503) and i < intents - 1:
+                # MusicBrainz diu 503 quan va carregat: s'hi torna un sol cop al cap de 3 s (abans s'esperava 30 s i
+                # 60 s per disc, un minut i mig perdut cada vegada); Discogs (429) sí que demana esperar
+                if host == 'musicbrainz.org':
+                    if i >= 1:
+                        raise ErrorHTTP(code)
+                    time.sleep(3)
+                    continue
                 time.sleep(30 * (i + 1))
                 continue
             if code >= 400:
@@ -630,7 +637,21 @@ MB_COMPOSICIO = ('composer', 'writer', 'lyricist')
 MB_MUSICS = ('instrument', 'vocal', 'performer', 'conductor')     # la resta (productor, enginyer...) no són intèrprets
 
 
+_mb_caigut = [0.0]       # si MusicBrainz no respon (503), no s'hi torna fins al cap de 5 minuts: no es perd temps a cada disc
+
+
 def _mb(path, **q):
+    if time.time() - _mb_caigut[0] < 300:
+        raise ErrorHTTP(503)
+    try:
+        return _mb_ara(path, **q)
+    except ErrorHTTP as e:
+        if e.code == 503:
+            _mb_caigut[0] = time.time()
+        raise
+
+
+def _mb_ara(path, **q):
     q['fmt'] = 'json'
     return get(MB + path + '?' + urllib.parse.urlencode(q), headers=MB_UA, json_=True)
 
