@@ -63,7 +63,9 @@ if QUE in ('pendents', 'tot'):
             continue
         try:
             if not (d.get('fonts') or {}).get('Discogs'):
-                C.artista_de_etiquetes(d, NAS, artistes)
+                # primer com si el NAS no respongués (només completa(), sense llegir res de la carpeta)
+                for k in ('id_temes', 'art_dg', 'no_trobat'):
+                    d.pop(k, None)
                 C.completa(d, artistes, estils)
                 if not d.get('fonts') and C.artista_de_etiquetes(d, NAS, artistes):
                     C.completa(d, artistes, estils)
@@ -166,6 +168,7 @@ if QUE in ('regressio', 'tot'):
              'auto': ['titol', 'suport', 'temes', 'data'] + (['any'] if any_ else [])}
         if any_:
             d['any'] = any_
+        t0 = time.time()
         try:
             for nit in range(2):          # dues nits: primer l'artista dels arxius o de Discogs, després completar
                 C.artista_de_etiquetes(d, fals, artistes)
@@ -179,9 +182,10 @@ if QUE in ('regressio', 'tot'):
             continue
         r = resum(d, artistes)
         r['esperat'] = f'{art_ok} - {tit_ok}'
+        r['segons'] = round(time.time() - t0)
         r['ok'] = bool(r['discogs']) and C.N(r['artista']) == C.N(art_ok) and C.NT(r['titol']) == C.NT(tit_ok)
         res.append(r)
-        print(('OK ' if r['ok'] else 'FALLA ') + orig + ' -> ' + f"{r['artista']} - {r['titol']}", flush=True)
+        print(('OK ' if r['ok'] else 'FALLA ') + orig + ' -> ' + f"{r['artista']} - {r['titol']} ({r['segons']} s)", flush=True)
     out['regressio'] = res
     json.dump(out, open(SORTIDA, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 print('fet')

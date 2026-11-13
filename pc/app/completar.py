@@ -1185,6 +1185,23 @@ def completa(d, artistes, estils_meus):
             if x and encaixa(x):
                 dg, variant = x, (a, t)
                 break
+    # 1a''. carpeta sense l'artista («2010 - Love Is In The Missile», «Mothership Connection [1975]»): l'artista es
+    # busca a Discogs pel títol, l'any i els temes aquí mateix, sense esperar que el NAS estigui connectat (abans només
+    # es feia a formata_tots(), que no fa res sense connexió; 13/11/2026). Un cop cada 30 dies (camp art_dg).
+    if not dg and nas_nou and titol and 'Discogs' not in fonts_d and 'titol' in auto and not d.get('art_id3') \
+            and not dg_provat(d) and not cancons_soltes(nom_art, titol):
+        sa = sense_artista(d.get('carpeta') or '')
+        c = d.get('carpeta') or ''
+        if sa and N(nom_art) in (N(sa[0]), N(c), N(comu.nom_net(c)[0])):
+            d['art_dg'] = AVUI
+            try:
+                t_net = comu.nom_net(titol)[0]
+                a = DG.artista_per_titol(t_net, temes_nets, sa[0] or str(d.get('any') or ''))
+                x = DG.cerca(a, t_net, d.get('any', ''), temes_nets) if a else None
+                if x and encaixa(x):
+                    dg, variant = x, (a, t_net)
+            except Exception as e:
+                log(f'  Discogs (artista pel títol): error {e!r}')
     if dg:
         d['dg_ok'] = True       # comprovat amb els temes: la carpeta ja es pot reanomenar amb aquestes dades
     if dg and variant:
@@ -2162,7 +2179,7 @@ def elimina_duplicats():
                     a, b = discs[L[x]], discs[L[y]]
                     if arrel_de(L[x]) != arrel_de(L[y]) and (mateix_disc(nom(a), a.get('titol'), nom(b), b.get('titol'))
                                                            or mateix_contingut(nom(a), a, nom(b), b)
-                                                           or carpeta_moguda(a, b, al_nas)):
+                                                           or carpeta_moguda(a, b, al_nas)) and not discs_diferents(a, b, al_nas):
                         pare[arrel_de(L[x])] = arrel_de(L[y])
         grups = {}
         for i, d in enumerate(discs):
@@ -2266,6 +2283,18 @@ def carpeta_moguda(d1, d2, al_nas):
     if len(al_nas) < 100 or not c1 or not c2 or (c1 in al_nas) == (c2 in al_nas):
         return False
     return temes_equivalents(d1.get('temes'), d2.get('temes'))
+
+
+def discs_diferents(d1, d2, al_nas):
+    """Dues fitxes amb el mateix artista i el mateix títol que NO són el mateix disc: totes dues tenen la seva carpeta
+    al NAS i els temes són uns altres. Hi ha grups amb diversos discos que es diuen igual (The Spits en té quatre que
+    es diuen «The Spits»; Weezer, Peter Gabriel...): mai s'ajunten (13/11/2026)."""
+    c1, c2 = d1.get('carpeta'), d2.get('carpeta')
+    if not c1 or not c2 or c1 == c2 or c1 not in al_nas or c2 not in al_nas:
+        return False
+    if len(d1.get('temes') or []) < 3 or len(d2.get('temes') or []) < 3:
+        return False
+    return not temes_equivalents(d1.get('temes'), d2.get('temes'))
 
 
 def passa_estrelles(x, w):
