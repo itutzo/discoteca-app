@@ -1183,10 +1183,17 @@ let mbUltim = 0;
 async function mb(path){
   const espera = 1100 - (Date.now() - mbUltim);           // MusicBrainz demana 1 consulta per segon
   if(espera > 0) await new Promise(r => setTimeout(r, espera));
-  mbUltim = Date.now();
-  const r = await fetch(MB + path + (path.includes('?') ? '&' : '?') + 'fmt=json');
-  if(!r.ok) throw new Error('MusicBrainz ' + r.status);
-  return r.json();
+  // MusicBrainz respon 503 si li arriben massa consultes des de casa (p. ex. mentre el PC completa dades):
+  // es torna a provar dues vegades, esperant 2 i 5 segons, abans de donar-ho per perdut
+  for(let i = 0; ; i++){
+    mbUltim = Date.now();
+    let r = null;
+    try{ r = await fetch(MB + path + (path.includes('?') ? '&' : '?') + 'fmt=json'); }catch(e){ if(i >= 2) throw e; }
+    if(r && r.ok) return r.json();
+    if(r && ![429, 502, 503, 504].includes(r.status)) throw new Error('MusicBrainz ' + r.status);
+    if(i >= 2) throw new Error('MusicBrainz ' + (r ? r.status : 'sense resposta'));
+    await new Promise(res => setTimeout(res, i ? 5000 : 2000));
+  }
 }
 const neteja = s => norm(s).replace(/^the\s+|,\s*the$/g, '').replace(/[^a-z0-9]/g, '');
 async function buscaArtistaMB(nom, banda){
@@ -1238,8 +1245,18 @@ async function obreInfo(nom, banda){
     <div id="infoCos"><p class="carrega">Buscant a Wikipedia i MusicBrainz…</p></div></div>`;
   sh.scrollTop = 0;
   const cos = () => document.getElementById('infoCos');
+  const reintenta = `<button class="btn ghost" type="button" data-info="${esc(nom)}" data-banda="${esc(banda || '')}">Torna-ho a provar</button>`;
+  let a;
+  try{ a = await buscaArtistaMB(nom, banda); }
+  catch(e){
+    // MusicBrainz no respon: almenys la biografia de la Wikipedia, buscada pel nom
+    let wiki = null;
+    try{ wiki = await wikipedia([], nom); }catch{}
+    cos().innerHTML = (wiki ? `<div class="ihero">${wiki.foto ? `<img src="${esc(wiki.foto)}" alt="" referrerpolicy="no-referrer">` : ''}<div><p>${esc(wiki.text)}</p><p class="srcs"><a href="${urlSegur(wiki.url)}" target="_blank" rel="noopener">Wikipedia (${wiki.llengua})</a></p></div></div>` : '')
+      + `<p class="who2">MusicBrainz no respon ara mateix, i sense MusicBrainz no puc mostrar ${wiki ? 'els membres ni els discos' : 'la fitxa'}. Torna-ho a provar d'aquí a un moment.</p><p>${reintenta}</p>`;
+    return;
+  }
   try{
-    const a = await buscaArtistaMB(nom, banda);
     if(!a){ cos().innerHTML = '<p>No he trobat aquest nom a MusicBrainz. Prova els enllaços de dalt.</p>'; return; }
     const det = await mb('artist/' + a.id + '?inc=artist-rels+url-rels');
     const wiki = await wikipedia(det.relations, nom);
@@ -1260,8 +1277,9 @@ async function obreInfo(nom, banda){
     const llista = [...grups.values()];
     const membresDe = llista.filter(x => !x.inv), membres = llista.filter(x => x.inv);
     // discos (àlbums d'estudi i en directe)
-    const rg = await mb('release-group?limit=100&artist=' + a.id);
-    const discosMB = (rg['release-groups'] || []).filter(x => ['Album', 'EP'].includes(x['primary-type']) && !(x['secondary-types'] || []).includes('Compilation'))
+    let rg = null;
+    try{ rg = await mb('release-group?limit=100&artist=' + a.id); }catch{}
+    const discosMB = ((rg || {})['release-groups'] || []).filter(x => ['Album', 'EP'].includes(x['primary-type']) && !(x['secondary-types'] || []).includes('Compilation'))
       .sort((x, y) => (x['first-release-date'] || '9').localeCompare(y['first-release-date'] || '9'));
     const noms = new Set([neteja(det.name), ...llista.map(x => neteja(x.nom))]);
     const tinc = new Map(discs.filter(d => noms.has(neteja(artName(d.artista)))).map(d => [neteja(d.titol), d]));
@@ -1276,9 +1294,9 @@ async function obreInfo(nom, banda){
       ${discosMB.length ? `<h3 class="sec">Discos · ${discosMB.length}</h3><ul class="disc">${discosMB.map(x => {
           const d = tinc.get(neteja(x.title));
           return `<li>${d ? `<button class="link" type="button" data-open-info="${esc(d.id)}">${esc(x.title)}</button><span class="tag">El tens</span>` : esc(x.title)} <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}${x['primary-type'] === 'EP' ? ' · EP' : ''}</span></li>`;
-        }).join('')}</ul>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
+        }).join('')}</ul>` : !rg ? `<p class="who2">No s'ha pogut carregar la llista de discos de MusicBrainz.</p><p>${reintenta}</p>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
   }catch(e){
-    cos().innerHTML = '<p>No s\'ha pogut consultar ara mateix. Comprova la connexió i torna-ho a provar, o fes servir els enllaços de dalt.</p>';
+    cos().innerHTML = `<p>No s'ha pogut consultar ara mateix (MusicBrainz no respon). Torna-ho a provar d'aquí a un moment, o fes servir els enllaços de dalt.</p><p>${reintenta}</p>`;
   }
 }
 function tancaInfo(){ $('#info').hidden = true; $('#scrim2').hidden = true; }
