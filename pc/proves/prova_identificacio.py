@@ -108,6 +108,9 @@ CASOS = [
     ('2019 - One Man Gang', 'Michael Monroe - 2019 - One Man Gang', 'Michael Monroe', 'One Man Gang'),
     ('Bright Side of Dim', 'Mothership, The - 2014 - Bright Side Of Dim', 'The Mothership', 'Bright Side Of Dim'),
     ('Skin Of My teeth-MAD JUANA', 'Mad Juana - 1997 - Skin Of My Teeth', 'Mad Juana', 'Skin Of My Teeth'),
+    ('Acoustic Voodoo-MAD JUANA', 'Acoustic Voodoo-MAD JUANA', 'Mad Juana', 'Acoustic Voodoo'),
+    ('jetboy-2023 - Crate Diggin usa', 'jetboy-2023 - Crate Diggin usa', 'Jetboy', "Crate Diggin'"),
+    ('jetboy-Feel The Shake usa', 'jetboy-Feel The Shake usa', 'Jetboy', 'Feel The Shake'),
     # l'artista amb notes entre parèntesis ha de quedar net (14/11/2026)
     ('Grease Helmet (FIN,pre-Ajattara,Amorphis,Amoral) [glam,hard-rock] - 2012 - Grease Helmet',
      'Grease Helmet (FIN,pre-Ajattara,Amorphis,Amoral) [glam,hard-rock] - 2012 - Grease Helmet', 'Grease Helmet', 'Grease Helmet'),
