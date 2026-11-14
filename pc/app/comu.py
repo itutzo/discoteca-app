@@ -600,3 +600,210 @@ def afegeix_suport(d, nou):
         d['suport'] = ', '.join(L)
         return True
     return False
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Norma de l'Ignasi (14/11/2026): cada estil (i cada gènere) surt un sol cop, encara que s'hagi escrit de maneres
+# diferents. Regla general, sense llistes per estil:
+#  - no compten majúscules, accents, espais, guions, barres ni «&»/«and»/«n'» («Pop Rock» = «Pop-Rock» = «Pop/Rock»
+#    = «PopRock»; «Rock & Roll» = «Rock n' Roll»); un «7» entre lletres és la barra mal picada («Pop7Rock»);
+#  - les faltes es corregeixen paraula per paraula contra el vocabulari de les etiquetes de Last.fm desades a
+#    lastfm.json (milers d'artistes): una paraula que no hi surt passa a la paraula que hi surt i que només té una
+#    lletra de diferència (dues, si és llarga), si és clarament la més usada («Rcok», «Southen», «Alternarive»,
+#    «Experiemntal», «Contemporany»); i un estil sencer que no surt a les fonts s'ajunta amb un de la discoteca que hi
+#    sigui a una lletra («Blue Rock» → «Blues Rock»), però mai dos estils que existeixen tots dos («Punk Rock» /
+#    «Funk Rock»);
+#  - unes poques paraules en castellà o català passen a l'anglès de les fonts (ESTIL_TRAD);
+#  - el nom que es queda és el més usat a les fonts (Last.fm: «Blues Rock» i no «Blues-Rock») i, si les fonts no en
+#    diuen res, el més usat a la discoteca (que ve d'AllMusic, Discogs o MusicBrainz).
+ESTIL_TRAD = {'alternativa': 'alternative', 'gotico': 'gothic', 'goticos': 'gothic', 'sureno': 'southern',
+              'directo': 'live', 'psicodelia': 'psychedelia', 'psicodelico': 'psychedelic', 'psicodelica': 'psychedelic',
+              'electronico': 'electronic', 'electronica': 'electronica', 'experimentale': 'experimental'}
+# un estil sencer que és el mateix que un altre amb una altra paraula
+ESTIL_SIN = {'psychedelia': 'psychedelic'}
+_PSICO = re.compile(r'^ps[iy]ch?[oe]deli(c|ch|co|ca)$')        # Psicodelic, Psicodelich, Psycodelich…
+_PSICO_A = re.compile(r'^ps[iy]ch?[oe]delia$')                 # Psychodelia, Psycodelia
+
+
+def _sense_accents(s):
+    return unicodedata.normalize('NFD', str(s or '')).encode('ascii', 'ignore').decode()
+
+
+def _dist(a, b, maxim=2):
+    """Distància d'edició amb transposicions (Damerau). Para quan passa del màxim."""
+    if abs(len(a) - len(b)) > maxim:
+        return maxim + 1
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            c = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + c)
+            if prev2 is not None and i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        if min(cur) > maxim:
+            return maxim + 1
+        prev2, prev = prev, cur
+    return prev[-1]
+
+
+def _peces_estil(s):
+    """Divideix un estil en paraules i separadors, mantenint com estava escrit."""
+    s = str(s or '').strip()
+    linies = [x.strip() for x in s.splitlines() if x.strip()]
+    s = linies[0] if linies and all(N(x) == N(linies[0]) for x in linies) else ' '.join(linies)  # «X\nX» → «X»
+    s = re.sub(r'(?<=[A-Za-z])7(?=[A-Za-z])', '/', s)                                            # «Pop7Rock»
+    s = re.sub(r'(?<=[a-z])(?=[A-Z][a-z])', ' ', s)                                              # «PopRock»
+    return [p for p in re.split(r"([A-Za-z0-9À-ÿ']+)", s) if p != '']
+
+
+class Estils:
+    """Vocabulari de les fonts (etiquetes de Last.fm desades) per corregir i triar el nom dels estils."""
+
+    def __init__(self, lastfm=None, meus=None):
+        # meus: {paraula: nombre de discos de la discoteca que la fan servir}. Una paraula que l'Ignasi fa servir en
+        # molts discos («Trad», d'«American Trad Rock», d'AllMusic) no és cap falta encara que Last.fm no la tingui.
+        self.meus = meus or {}
+        self.tag = {}       # etiqueta exacta (minúscules) → nombre d'artistes
+        self.par = {}       # paraula → nombre d'artistes
+        for v in (lastfm or {}).values():
+            if not isinstance(v, dict):
+                continue
+            for t in v.get('t') or []:
+                if not t or not isinstance(t[0], str):
+                    continue
+                e = _sense_accents(t[0]).lower().strip()
+                self.tag[e] = self.tag.get(e, 0) + 1
+                for w in re.findall(r"[a-z0-9]+", e):
+                    self.par[w] = self.par.get(w, 0) + 1
+        self.claus_tag = {}
+        for e, n in self.tag.items():
+            k = self.clau_simple(e)
+            if n > self.claus_tag.get(k, 0):
+                self.claus_tag[k] = n
+        self._cache = {}
+
+    @staticmethod
+    def clau_simple(s):
+        s = _sense_accents(s).lower().replace('&', ' and ').replace('+', ' and ')
+        s = re.sub(r"\bn'|'n'|\bn\b", ' and ', s)
+        return re.sub(r'[^a-z0-9]', '', s)
+
+    def paraula(self, w):
+        """Corregeix una paraula (minúscules, sense accents)."""
+        if w in self._cache:
+            return self._cache[w]
+        r = w
+        if w.isdigit() or w in ('n', 'and'):
+            pass
+        elif _PSICO.match(w) and w != 'psychedelic':
+            r = 'psychedelic'
+        elif _PSICO_A.match(w) and w != 'psychedelia':
+            r = 'psychedelia'
+        elif w in ESTIL_TRAD:
+            r = ESTIL_TRAD[w]
+        elif self.par.get(w, 0) < 3 and len(w) >= 3 and self.par:
+            maxim = 2 if len(w) >= 9 else 1
+            cands = sorted(((n, x) for x, n in self.par.items() if n >= 20 and abs(len(x) - len(w)) <= maxim
+                            and len(x) >= 3 and _dist(w, x, maxim) <= maxim), reverse=True)
+            for t in ESTIL_TRAD:                       # «Aternativa» → «alternativa» → «alternative»
+                if _dist(w, t, 1) <= 1 and len(w) >= 6:
+                    cands.insert(0, (10 ** 9, ESTIL_TRAD[t]))
+            if cands and (len(cands) == 1 or cands[0][0] >= 3 * cands[1][0]):
+                n_meu = self.meus.get(w, 0)
+                if n_meu < 5 or self.meus.get(cands[0][1], 0) >= 20 * n_meu:
+                    r = cands[0][1]
+        self._cache[w] = r
+        return r
+
+    def corregeix(self, s):
+        """Torna l'estil amb les paraules corregides, mantenint els separadors i les majúscules d'origen."""
+        out = []
+        for p in _peces_estil(s):
+            if re.fullmatch(r"[A-Za-z0-9À-ÿ']+", p) and not p.startswith("'") and p.lower() not in ("n'",):
+                w = _sense_accents(p).lower().strip("'")
+                c = self.paraula(w)
+                if c == w and _sense_accents(p) != p:
+                    out.append(_sense_accents(p))
+                elif c == w:
+                    out.append(p)
+                else:
+                    out.append(c.upper() if p.isupper() and len(p) > 1 else c.capitalize() if p[:1].isupper() else c)
+            else:
+                out.append(p)
+        r = re.sub(r'\s+', ' ', ''.join(out)).strip()
+        r = re.sub(r'\s*/\s*', '/', r)
+        r = re.sub(r'\s*-\s*', '-', r)
+        k = self.clau_simple(r)
+        if k in ESTIL_SIN:
+            r = ESTIL_SIN[k].title()
+        return r
+
+    def fonts(self, s):
+        """Quantes vegades surt aquest estil, escrit exactament així, a les fonts."""
+        return self.tag.get(_sense_accents(s).lower().strip(), 0)
+
+
+def _titol_estil(s):
+    """Majúscula a cada paraula; les sigles («EBM», «R&B») i «n'» es queden com són."""
+    def f(m):
+        w = m.group(0)
+        if w.isupper() and len(w) <= 4 or w.lower() in ("n'", 'n', 'and') and m.start() > 0:
+            return w if w.isupper() else w.lower()
+        return w[:1].upper() + w[1:].lower() if not (len(w) > 1 and w[1:].isupper() and w[:1].isupper()) else w
+    return re.sub(r"[A-Za-z0-9À-ÿ']+", f, s)
+
+
+def unifica_estils_llista(valors, lastfm=None, comptats=None):
+    """Rep tots els estils (o gèneres) de la discoteca i torna {valor original: nom bo}.
+    `comptats`: {valor: nombre de discos}. Els grups i el nom bo es decideixen amb la regla de dalt."""
+    comptats = comptats or {v: 1 for v in valors}
+    if isinstance(lastfm, Estils):
+        E = lastfm
+    else:
+        meus = {}
+        for v, n in comptats.items():
+            for w in set(re.findall(r'[a-z0-9]+', _sense_accents(v).lower())):
+                meus[w] = meus.get(w, 0) + n
+        E = Estils(lastfm, meus)
+    corr = {v: E.corregeix(v) for v in comptats}
+    grups = {}
+    for v, c in corr.items():
+        grups.setdefault(E.clau_simple(c), []).append(v)
+    # un estil sencer que no surt a les fonts s'ajunta amb un altre de la discoteca a una lletra que sí que hi surt,
+    # o que és molt més usat («Blue Rock» → «Blues Rock», «op/Rock» → «Pop/Rock»)
+    pes = {k: sum(comptats[v] for v in vs) for k, vs in grups.items()}
+    for k in sorted(grups, key=lambda k: pes[k]):
+        if k not in grups or E.claus_tag.get(k, 0) >= 3 or len(k) < 6:
+            continue
+        maxim = 1
+        cands = [(E.claus_tag.get(k2, 0), pes[k2], k2) for k2 in grups if k2 != k and _dist(k, k2, maxim) <= maxim
+                 and (E.claus_tag.get(k2, 0) >= 3 or pes[k2] >= 5 * pes[k])]
+        cands.sort(reverse=True)
+        if cands and (len(cands) == 1 or cands[0][:2] != cands[1][:2]):
+            k2 = cands[0][2]
+            grups[k2] += grups.pop(k)
+            pes[k2] += pes.pop(k)
+    res = {}
+    for k, vs in grups.items():
+        formes = {}
+        for v in vs:
+            formes[corr[v]] = formes.get(corr[v], 0) + comptats[v]
+        # forma: la que més surt a les fonts; si no, la de més discos (sense comptar majúscules)
+        per_min = {}
+        for f, n in formes.items():
+            per_min.setdefault(f.lower(), []).append((n, f))
+        millor = max(per_min, key=lambda m: (E.fonts(m), sum(n for n, _ in per_min[m]), m))
+        bo = _titol_estil(max(per_min[millor])[1])
+        for v in vs:
+            res[v] = bo
+    return res
+
+
+def clau_estil(s, E=None):
+    """Clau per comparar estils escrits diferent (sense vocabulari, només forma i paraules en castellà)."""
+    E = E or _ESTILS_BUIT
+    return E.clau_simple(E.corregeix(s))
+
+
+_ESTILS_BUIT = Estils({})
