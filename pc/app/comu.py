@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Funcions comunes de la Discoteca: rutes, lectura i escriptura segura de dades."""
 from difflib import SequenceMatcher
-import json, os, re, shutil, threading, time, unicodedata, configparser, datetime
+import functools, json, os, re, shutil, threading, time, unicodedata, configparser, datetime
 
 ARREL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # ...\Discoteca
 DADES = os.path.join(ARREL, 'dades')
@@ -250,6 +250,52 @@ def N(s):
     s = re.sub(r',\s*the$', '', s)
     s = re.sub(r'\b(the|a|an)\b', '', s)
     return re.sub(r'[^a-z0-9]', '', s)
+
+
+# Norma de l'Ignasi (14/11/2026): un grup que ja tens es reconeix encara que estigui escrit diferent, i el nom bo és
+# el de la portada del disc, que és el que ell ja hi té («Million $ Reload», no «Million Dollar Reload»). Els símbols
+# es llegeixen com a paraules, les abreviatures es despleguen, els números en lletres valen com a xifres, i no compten
+# «The», la inicial del mig amb punt ni les lletres doblades. Cap altra falta: «Ryan Adams» no és «Bryan Adams».
+# És la mateixa regla que la funció claus() de la pàgina (index.html), que fa servir «Per a tu».
+_SIMBOL = {'$': ('dollar', 's', ''), '@': ('at', 'a'), '%': ('percent', ''), '#': ('number', ''), '!': ('', 'i'),
+           '€': ('euro', 'e'), '£': ('pound', 'l')}
+_PARAULA = {'dr': 'doctor', 'st': 'saint', 'mt': 'mount', 'mr': 'mister', 'mrs': 'missus', 'jr': 'junior',
+            'sr': 'senior', 'bros': 'brothers', 'vs': 'versus', 'n': 'and', 'y': 'and', 'et': 'and',
+            **{w: str(i) for i, w in enumerate('zero one two three four five six seven eight nine ten eleven twelve '
+                                               'thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty'.split())},
+            'hundred': '100', 'thousand': '1000', 'million': '1000000'}
+
+
+@functools.lru_cache(maxsize=None)
+def claus_nom(nom):
+    """Totes les maneres equivalents d'escriure un nom d'artista, per comparar-lo amb els que ja tens: n'hi ha prou que
+    en coincideixi una. Inclou sempre N(nom)."""
+    s = ''.join(c for c in unicodedata.normalize('NFD', str(nom or '').lower()) if not unicodedata.combining(c))
+    s = re.sub(r"[’‘`´]", "'", s)
+    s = re.sub(r'\s*[\(\[][^\)\]]*[\)\]]', ' ', s)
+    s = re.sub(r'\s*[&+]\s*', ' and ', s)
+    v = [s]
+    for c, op in _SIMBOL.items():
+        if c in s:
+            v = [x.replace(c, f' {o} ' if o else '') for x in v for o in op]
+    K = set()
+    for x in v[:8]:
+        x = unicodedata.normalize('NFD', x).encode('ascii', 'ignore').decode()
+        w = [p for p in re.sub(r'[^a-z0-9]+', ' ', re.sub(r',\s*the\s*$', '', x)).split() if p != 'the']
+        K.add(''.join(_PARAULA.get(p, p) for p in w))
+        K.add(''.join(w))
+        K.add(''.join(re.sub(r'([a-z])\1+', r'\1', _PARAULA.get(p, p)) for p in w))
+    m = re.sub(r'(\b[a-z]{2,}\s+)[a-z]\.\s+(?=\S)', r'\1', s)
+    if m != s:
+        K.add(N(m))
+    K.add(N(nom))
+    K.discard('')
+    return frozenset(K)
+
+
+def mateix_artista(a, b):
+    """Dos noms d'artista són el mateix grup escrit diferent (vegeu claus_nom)."""
+    return N(a) == N(b) or bool(claus_nom(a) & claus_nom(b))
 
 
 NUMS = {'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8',

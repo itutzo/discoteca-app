@@ -922,8 +922,34 @@ async function ignora(tipus, clau){
 const tok2 = s => norm(s).replace(/^the\s+|,\s*the$/,'').replace(/[^a-z0-9]/g,'');
 // «Ja el tinc?»: compara noms d'artista i títols de manera tolerant («&» = «and», sense «The», sense notes
 // d'edició entre parèntesis, «A / B», «feat.», «& The Band»…), perquè no es recomanin discos que ja són a la discoteca.
-const clau = s => norm(s).replace(/[’‘`´]/g, "'").replace(/\s*[(\[][^)\]]*[)\]]/g, ' ').replace(/\s*[&+]\s*/g, ' and ')
+const clauVella = s => norm(s).replace(/[’‘`´]/g, "'").replace(/\s*[(\[][^)\]]*[)\]]/g, ' ').replace(/\s*[&+]\s*/g, ' and ')
   .replace(/^the\s+|,\s*the\s*$/g, '').replace(/\bthe\b|\bth'/g, ' ').replace(/[^a-z0-9]/g, '');
+// Norma de l'Ignasi (14/11/2026): un grup que ja tens no es recomana mai, encara que estigui escrit diferent.
+// Els símbols es llegeixen com a paraules («Million$ Reload» = «Million Dollar Reload», «Ke$ha» = «Kesha»,
+// «Guns N' Roses» = «Guns And Roses»), igual que les abreviatures («Dr.» = «Doctor», «St.» = «Saint») i els números
+// escrits en lletres («Three Doors Down» = «3 Doors Down»). Accents, majúscules, espais, punts, «The», la inicial del mig
+// i les lletres doblades no compten. No s'hi accepta cap altra falta: «Ryan Adams» no és «Bryan Adams» ni «Dirty Looks» és «Dirty Loops».
+const SIMBOL = {'$': ['dollar', 's', ''], '@': ['at', 'a'], '%': ['percent', ''], '#': ['number', ''], '!': ['', 'i'], '€': ['euro', 'e'], '£': ['pound', 'l']};
+const PARAULA = {dr:'doctor', st:'saint', mt:'mount', mr:'mister', mrs:'missus', jr:'junior', sr:'senior', bros:'brothers',
+  vs:'versus', n:'and', y:'and', et:'and', zero:'0', one:'1', two:'2', three:'3', four:'4', five:'5', six:'6', seven:'7', eight:'8',
+  nine:'9', ten:'10', eleven:'11', twelve:'12', thirteen:'13', fourteen:'14', fifteen:'15', sixteen:'16', seventeen:'17',
+  eighteen:'18', nineteen:'19', twenty:'20', hundred:'100', thousand:'1000', million:'1000000'};
+const claus = s => {
+  let v = [norm(s).replace(/[’‘`´]/g, "'").replace(/\s*[(\[][^)\]]*[)\]]/g, ' ').replace(/\s*[&+]\s*/g, ' and ')];
+  for(const [c, op] of Object.entries(SIMBOL)) if(v[0].includes(c)) v = v.flatMap(x => op.map(o => x.split(c).join(o ? ` ${o} ` : '')));
+  const K = new Set();
+  for(const x of v.slice(0, 8)){
+    const w = x.replace(/,\s*the\s*$/, '').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(p => p && p !== 'the');
+    K.add(w.map(p => PARAULA[p] || p).join(''));
+    K.add(w.join(''));
+    K.add(w.map(p => (PARAULA[p] || p).replace(/([a-z])\1+/g, '$1')).join(''));   // «Puddle Of Mud» = «Puddle of Mudd»
+  }
+  // sense la inicial del mig: «Travis T. Warren» = «Travis Warren» (només amb punt, «Generation X» no és «D Generation»)
+  const ini = /(\b[a-z]{2,}\s+)[a-z]\.\s+(?=\S)/g;
+  if(ini.test(norm(s))) K.add(clauVella(norm(s).replace(ini, '$1')));
+  K.add(clauVella(s)); K.delete(''); return [...K];
+};
+const clau = s => claus(s)[0];
 const ENLLAC = /^(and|y|e|i|band|group|trio|quartet|project|experience|feat|ft|featuring|with)$/;
 // «A / B» i «A feat. B» sempre; «A, B» només si els noms tenen dues paraules o més («Earth, Wind & Fire» no és «Earth»)
 const dues = s => norm(s).replace(/^the\s+/, '').trim().split(/\s+/).length >= 2;
@@ -931,30 +957,33 @@ const parts = s => String(s ?? '').split(/\s*\/\s*|\s+(?:feat\.?|ft\.?|featuring
   .flatMap(p => { const c = p.split(/,\s+(?!the\s*$)/i); return c.length > 1 && c.every(dues) ? [p, ...c] : [p]; }).filter(Boolean);
 // «Stevie Ray Vaughan & Double Trouble» → també «Stevie Ray Vaughan»; «Kenny Wayne Shepherd Band» → «Kenny Wayne Shepherd»
 const arrels = s => { const w = norm(s).replace(/\s*[&+]\s*/g, ' and ').replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(x => x && x !== 'the'), r = [];
-  for(let i = 2; i < w.length; i++) if(ENLLAC.test(w[i])) r.push(clau(w.slice(0, i).join(' ')));   // dues paraules o més: «Iron and Wine» no és «Iron»
+  for(let i = 2; i < w.length; i++) if(ENLLAC.test(w[i])) r.push(...claus(w.slice(0, i).join(' ')));   // dues paraules o més: «Iron and Wine» no és «Iron»
   return r.filter(k => k.length >= 3); };
+const distancia = (a, b) => {
+  let p = Array.from({length: b.length + 1}, (_, j) => j);
+  for(let i = 1; i <= a.length; i++){ const q = [i]; for(let j = 1; j <= b.length; j++) q[j] = Math.min(p[j] + 1, q[j-1] + 1, p[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); p = q; }
+  return p[b.length];
+};
 const semblant = (a, b) => {
   if(a === b) return true;
   if(Math.min(a.length, b.length) >= 4 && (a.includes(b) || b.includes(a))) return true;
   if(Math.abs(a.length - b.length) > 3 || Math.max(a.length, b.length) < 6) return false;
-  let p = Array.from({length: b.length + 1}, (_, j) => j);
-  for(let i = 1; i <= a.length; i++){ const q = [i]; for(let j = 1; j <= b.length; j++) q[j] = Math.min(p[j] + 1, q[j-1] + 1, p[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); p = q; }
-  return p[b.length] / Math.max(a.length, b.length) <= 0.2;
+  return distancia(a, b) / Math.max(a.length, b.length) <= 0.2;
 };
 let tincCache = null;
 function jaTinc(){
   const noms = Object.values({...artistes, ...newArtists}), sig = noms.length + '|' + discs.length;
   if(tincCache?.sig === sig && tincCache.d === discs) return tincCache;
-  const T = new Set(noms.map(clau).filter(Boolean)), TP = new Set(noms.flatMap(arrels)), titols = new Map();
-  for(const d of discs){ const t = clau(d.titol); if(!t) continue; const a = clau(artName(d.artista)); (titols.get(t) || titols.set(t, new Set()).get(t)).add(a); }
+  const T = new Set(noms.flatMap(claus)), TP = new Set(noms.flatMap(arrels)), titols = new Map();
+  for(const d of discs){ const t = clauVella(d.titol); if(!t) continue; const a = clauVella(artName(d.artista)); (titols.get(t) || titols.set(t, new Set()).get(t)).add(a); }
   const alias = new Set();   // artistes que ja tens amb un altre nom («Built to Spill» = «Built To Spilt»), vistos pels títols
-  const artista = nom => { const P = parts(nom), K = [nom, ...P].map(clau).filter(Boolean);
+  const artista = nom => { const P = parts(nom), K = [nom, ...P].flatMap(claus);
     return K.some(k => T.has(k) || TP.has(k) || alias.has(k)) || [nom, ...P].flatMap(arrels).some(k => T.has(k)); };
   const disc = (nom, titol) => { if(artista(nom)) return true;
-    const A = titols.get(clau(titol)); if(!A) return false;
-    const K = [nom, ...parts(nom)].map(clau).filter(Boolean);
+    const A = titols.get(clauVella(titol)); if(!A) return false;
+    const K = [nom, ...parts(nom)].map(clauVella).filter(Boolean);
     const si = [...A].some(a => K.some(k => semblant(a, k)));
-    if(si) alias.add(clau(nom));
+    if(si) alias.add(clauVella(nom));
     return si; };
   return tincCache = {sig, d: discs, artista, disc};
 }
