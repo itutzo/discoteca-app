@@ -673,6 +673,7 @@ function renderSheet(){
   <div class="body">
     ${d.revisar?'<div class="notice">Completat automàticament: revisa-ho quan puguis. Si tot és correcte, edita i desa per treure aquest avís.</div>':''}
     ${d.estat==='pendent'?'<div class="notice">Pendent de completar: el procés automàtic hi afegirà les dades que falten.</div>':''}
+    ${d.falten?.length?`<div class="notice">A la carpeta hi falten ${d.falten.length} ${d.falten.length===1?'tema':'temes'} respecte al disc de Discogs: ${esc(d.falten.join(', '))}.</div>`:''}
     ${d.auto?.length?`<div class="notice">Dades omplertes automàticament, per revisar: ${esc(d.auto.map(k=>LABELS[k]||k).join(', '))}.</div>`:''}
     ${d.titol_abans&&d.titol_abans!==d.titol?`<div class="notice">Títol corregit automàticament (era «${esc(d.titol_abans)}»): Discogs té aquest disc amb els mateixos temes i un títol gairebé igual.</div>`:''}
     <div class="hero">${sleeveHTML(d,true)}

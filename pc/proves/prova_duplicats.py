@@ -19,7 +19,7 @@ import completar as C
 C.CFG['carpeta_musica'] = fals
 
 # (nom de carpeta d'abans, com es deia l'artista a la fitxa vella, títol de la fitxa vella, paraules per trobar la carpeta d'ara)
-CASOS = [('[1978] Rose Tattoo - Rose Tattoo', '[1978] Rose Tattoo', 'Rose Tattoo', ('Rose Tattoo - Rose Tattoo', '', '')),
+CASOS = [('[1978] Rose Tattoo - Rose Tattoo', '[1978] Rose Tattoo', 'Rose Tattoo', ('Rose Tattoo', '1978', '')),
          ('High Water II', 'High Water II', 'High Water II', ('Magpie Salute', 'High Water II', '')),
          ("The Roots Of Guns N' Roses", 'Hollywood Rose, Axl Rose, Izzy Stradlin', "The Roots Of Guns N' Roses", ('Hollywood Rose', 'Roots Of Guns', '')),
          ('2000 - Lift Your Skinny Fists Like Antennas To Heaven', '2000', 'Lift Your Skinny Fists Like Antennas To Heaven', ('Godspeed', 'Lift Your Skinny', '')),
