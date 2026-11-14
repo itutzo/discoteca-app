@@ -520,6 +520,9 @@ def TT(s):
     """Clau d'un tema per comparar: com NT() però sense res del que va entre parèntesis o claudàtors
     («Killing Time (Original Demo Version)» = «Killing Time», «Last Bandit (Live Electric)» = «Last Bandit»)."""
     sense = re.sub(r'[\(\[][^\(\)\[\]]*[\)\]]', ' ', str(s or ''))
+    # la data o la durada que algunes edicions posen al costat del tema («Music Critics - 1/24/81», «Dead Solger 11/15/82»,
+    # «Gone 4:31»): no és del títol (14/11/2026, The Fartz)
+    sense = re.sub(r'(?:\s*[-–—]?\s*(?:\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|\d{1,2}:\d{2}))+\s*$', '', sense)
     return NT(sense) or NT(s)
 
 
