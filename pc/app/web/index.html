@@ -536,7 +536,7 @@ function edicionsHTML(d){
   const nom = {mp3: d.bitrate === 'Flac' ? 'FLAC' : 'MP3', cd: 'CD', lp: 'Vinil'}, orig = anyOriginal(d) || String(d.any || '').slice(0, 4);
   const files = sups.map(s => {
     const t = s === 'mp3' ? (versioText(d) || 'encara per mirar (es fa de nit)')
-      : (ed[s] || []).map(e => edicioText(e, orig)).join(' / ') || (s === 'cd' ? 'CD gravat (còpia; no és a la teva col·lecció de Discogs)' : 'no consta a la teva col·lecció de Discogs');
+      : (ed[s] || []).map(e => edicioText(e, orig)).join(' / ') || (!d.edicions ? 'encara per mirar (es fa en sincronitzar amb Discogs)' : s === 'cd' ? 'CD gravat (còpia; no és a la teva col·lecció de Discogs)' : 'no consta a la teva col·lecció de Discogs');
     return `<b>${esc(nom[s] || s.toUpperCase())}:</b> ${esc(t)}`;
   });
   return `<dt>Edicions que tens</dt><dd>${files.join('<br>')}</dd>`;

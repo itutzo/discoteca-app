@@ -2155,7 +2155,7 @@ def sincronitza_discogs():
                                 falten = 0
                 d['edicions'] = ed_col[str(d['id'])]
             else:
-                d.pop('edicions', None)
+                d['edicions'] = {}   # mirat: no és a la col·lecció (la fitxa ho distingeix de «encara per mirar»)
     desa('discs.json', discs)
     with open(os.path.join(comu.DADES, 'discogs_informe.txt'), 'w', encoding='utf-8') as f:
         f.write(f'Sincronització amb Discogs {datetime.datetime.now():%d/%m/%Y %H:%M}\n\n' + '\n'.join(sorted(informe)))
