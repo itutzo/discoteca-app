@@ -15,9 +15,10 @@ lf = json.load(open(os.path.join(dades, 'lastfm.json'), encoding='utf-8')) if da
 IGUALS = [('Pop Rock', 'Pop-Rock'), ('Pop Rock', 'Pop/Rock'), ('Pop Rock', 'Pop7Rock'), ('Pop Rock', 'PopRock'),
           ('Rock & Roll', "Rock n' Roll"), ('Post-Grunge', 'Post Grunge'), ('Alternative', 'Alternativa'),
           ('Electro-Industrial', 'Electro-Industrial\nElectro-Industrial'), ('Psychedelic', 'Psicodelico'),
-          ('Alternative/Indie Rock', 'Alternative/ Indie Rock')]
+          ('Alternative/Indie Rock', 'Alternative/ Indie Rock'), ('Stoner', 'Stoner Rock'), ('Trash', 'Thrash'),
+          ('Songsinger', 'Singer-Songwriter'), ('Classical Rock', 'Classic Rock'), ('Sureño', 'Southern Rock')]
 DIFERENTS = [('Punk Rock', 'Funk Rock'), ('Hard Rock', 'Hair Rock'), ('Garage', 'Garage Rock'), ('Heavy', 'Heavy Metal'),
-             ('Stoner', 'Stoner Rock'), ('American Trad Rock', 'American Rock'), ('Alternative Folk', 'Alternative Rock')]
+             ('American Trad Rock', 'American Rock'), ('Alternative Folk', 'Alternative Rock')]
 FALTES = [('Southen Rock', 'Southern Rock'), ('Alternarive Indie Rock', 'Alternative/Indie Rock'),
           ('Experiemntal Pop', 'Experimental Pop'), ('Rcok', 'Rock'), ('Blue Rock', 'Blues Rock')]
 

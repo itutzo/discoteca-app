@@ -620,7 +620,10 @@ ESTIL_TRAD = {'alternativa': 'alternative', 'gotico': 'gothic', 'goticos': 'goth
               'directo': 'live', 'psicodelia': 'psychedelia', 'psicodelico': 'psychedelic', 'psicodelica': 'psychedelic',
               'electronico': 'electronic', 'electronica': 'electronica', 'experimentale': 'experimental'}
 # un estil sencer que és el mateix que un altre amb una altra paraula
-ESTIL_SIN = {'psychedelia': 'psychedelic'}
+# (els cinc darrers, aprovats per l'Ignasi el 14/11/2026, amb el nom que fan servir les fonts)
+ESTIL_SIN = {'psychedelia': 'psychedelic', 'trash': 'thrash', 'southern': 'southern rock',
+             'songsinger': 'singer-songwriter', 'songwriter': 'singer-songwriter', 'classicalrock': 'classic rock',
+             'stoner': 'stoner rock'}
 _PSICO = re.compile(r'^ps[iy]ch?[oe]deli(c|ch|co|ca)$')        # Psicodelic, Psicodelich, Psycodelich…
 _PSICO_A = re.compile(r'^ps[iy]ch?[oe]delia$')                 # Psychodelia, Psycodelia
 
