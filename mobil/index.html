@@ -207,6 +207,7 @@ fieldset.sups input{width:auto}
         <button class="chip" type="button" data-sup="fis" aria-pressed="false">Físics</button>
         <button class="chip" type="button" data-sup="pend" aria-pressed="false">Pendents</button>
         <button class="chip" type="button" data-sup="inc" aria-pressed="false" title="Discos amb algun camp buit">Incomplets</button>
+        <button class="chip" type="button" data-sup="anydif" aria-pressed="false" title="Discos on l'any de la fitxa no és el de l'original">Any diferent</button>
         <button class="chip recbtn" type="button" id="recsBtn">★ Per a tu</button>
       </div>
       <select id="fEstil" aria-label="Estil"><option value="">Tots els estils</option></select>
@@ -649,6 +650,7 @@ function filtered(){
     const L = supList(d);
     if(state.sup === 'pend'){ if(d.estat !== 'pendent') return false; }
     else if(state.sup === 'inc'){ if(!faltaDades(d).length) return false; }
+    else if(state.sup === 'anydif'){ if(!anyDiferent(d)) return false; }
     else if(state.sup === 'fis'){ if(!L.some(s=>PHYS.includes(s))) return false; }
     else if(state.sup && !L.includes(state.sup)) return false;
     if(state.estil && kEstil(d.estil) !== kEstil(state.estil)) return false;
@@ -696,6 +698,47 @@ function versioText(d){
              v.extra ? v.extra + (v.extra === 1 ? ' tema extra' : ' temes extra') : '', v.font === 'carpeta' && v.nota ? 'segons el nom de la carpeta: «' + v.nota + '»' : ''];
   return p.filter(Boolean).join(' · ');
 }
+// any de l'original: el de Discogs (versió principal) o, si no, el del nom de la carpeta «Artista - 1990 - Títol»
+function anyOriginal(d){ return String(d.versio?.orig || ((d.carpeta || '').match(/ - ((?:19|20)\d{2}) - /) || [])[1] || '').slice(0, 4); }
+// l'any de la fitxa no és el de l'original (p. ex. un any de l'Access): s'avisa, no es canvia sol
+function anyDiferent(d){ const o = anyOriginal(d), a = String(d.any || '').slice(0, 4); return !!(o && /^\d{4}$/.test(a) && a !== o); }
+// quina edició tens de cada suport: MP3 (la de la carpeta) i CD i vinil (la teva col·lecció de Discogs)
+function edicioText(e, orig){
+  const re = (orig && e.any && e.any > orig) || /Reissue|Remaster|Repress|Deluxe|Expanded/i.test(e.format || '');
+  return [(re ? 'Reedició' : 'Original') + (e.any ? ' ' + e.any : ''), e.segell, e.catno, e.format].filter(Boolean).join(' · ');
+}
+// temes de cada format: botons MP3 / CD / Vinil sobre la llista (les edicions de la col·lecció de Discogs porten els seus temes)
+function edsAmbTemes(d){ const ed = d.edicions || {}; return ['cd', 'lp'].flatMap(s => (ed[s] || []).map((e, i) => ({s, i, e}))).filter(x => x.e.temes?.length); }
+function formatsHTML(d){
+  const l = edsAmbTemes(d); if(!l.length) return '';
+  const nom = {cd: 'CD', lp: 'Vinil'};
+  return `<div class="chips fmts" style="margin:0 0 10px"><button class="chip" type="button" data-fmt="mp3" aria-pressed="true">${d.bitrate === 'Flac' ? 'FLAC' : 'MP3'} (carpeta)</button>`
+    + l.map(x => `<button class="chip" type="button" data-fmt="${x.s}:${x.i}" aria-pressed="false">${nom[x.s]}${x.e.any ? ' ' + esc(x.e.any) : ''} · ${x.e.temes.length}</button>`).join('') + '</div>';
+}
+function temesFormatsHTML(d){
+  const meus = new Set((d.temes || []).flatMap(t => [neteja(t[1]), clauDisc(t[1])]));
+  return edsAmbTemes(d).map(x => `<ol class="tracks alt" data-fmt-list="${x.s}:${x.i}" hidden>${x.e.temes.map(t => {
+      const no = meus.size && !meus.has(neteja(t[1])) && !meus.has(clauDisc(t[1]));
+      return `<li><span class="n">${esc(t[0] || '')}</span><span class="s"></span><span>${esc(t[1])}${no ? '<span class="tag">No és a la carpeta</span>' : ''}</span><span class="c"></span></li>`;
+    }).join('')}</ol>`).join('');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-fmt]'); if(!b) return;
+  const box = b.closest('#sheet') || document;
+  box.querySelectorAll('[data-fmt]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  box.querySelectorAll('[data-fmt-list]').forEach(o => { o.hidden = o.dataset.fmtList !== b.dataset.fmt; });
+});
+function edicionsHTML(d){
+  const sups = supList(d), ed = d.edicions || {};
+  if(sups.length < 2 && !ed.cd && !ed.lp) return fact('La teva edició', versioText(d));
+  const nom = {mp3: d.bitrate === 'Flac' ? 'FLAC' : 'MP3', cd: 'CD', lp: 'Vinil'}, orig = anyOriginal(d) || String(d.any || '').slice(0, 4);
+  const files = sups.map(s => {
+    const t = s === 'mp3' ? (versioText(d) || 'encara per mirar (es fa de nit)')
+      : (ed[s] || []).map(e => edicioText(e, orig)).join(' / ') || 'no consta a la teva col·lecció de Discogs';
+    return `<b>${esc(nom[s] || s.toUpperCase())}:</b> ${esc(t)}`;
+  });
+  return `<dt>Edicions que tens</dt><dd>${files.join('<br>')}</dd>`;
+}
 function renderSheet(){
   const d = current, sh = $('#sheet');
   const t = trackList(d), p = peopleList(d);
@@ -708,6 +751,7 @@ function renderSheet(){
     ${d.revisar?'<div class="notice">Completat automàticament: revisa-ho quan puguis. Si tot és correcte, edita i desa per treure aquest avís.</div>':''}
     ${d.estat==='pendent'?'<div class="notice">Pendent de completar: el procés automàtic hi afegirà les dades que falten.</div>':''}
     ${(()=>{ const f = faltaDades(d); return f.length ? `<div class="notice">Hi falta: ${esc(f.join(', '))}. Les fonts automàtiques no ho tenen; es pot omplir a mà amb «Edita».</div>` : ''; })()}
+    ${anyDiferent(d)?`<div class="notice">L'any de la fitxa (${esc(String(d.any).slice(0,4))}) no és el de l'original (${esc(anyOriginal(d))}, segons ${d.versio?.orig?'Discogs':'el nom de la carpeta'}). Si és un error, corregeix-lo amb «Edita»; el programa no el canvia sol.</div>`:''}
     ${d.falten?.length?`<div class="notice">A la carpeta hi falten ${d.falten.length} ${d.falten.length===1?'tema':'temes'} respecte al disc de Discogs: ${esc(d.falten.join(', '))}.</div>`:''}
     ${d.auto?.length?`<div class="notice">Dades omplertes automàticament, per revisar: ${esc(d.auto.map(k=>LABELS[k]||k).join(', '))}.</div>`:''}
     ${d.titol_abans&&d.titol_abans!==d.titol?`<div class="notice">Títol corregit automàticament (era «${esc(d.titol_abans)}»): Discogs té aquest disc amb els mateixos temes i un títol gairebé igual.</div>`:''}
@@ -724,7 +768,7 @@ function renderSheet(){
         </div>
         <dl class="facts">
           ${fact('Suport', supList(d).map(s=>(SUPS.find(x=>x[0]===s)||[s,s.toUpperCase()])[1]).join(' · '))}${fact('Bitrate', d.bitrate && (/^\d+$/.test(d.bitrate)? d.bitrate+' kbps' : d.bitrate))}
-          ${fact('La teva edició', versioText(d))}
+          ${edicionsHTML(d)}
           ${fact('Segell', d.segell)}${fact('Núm. de catàleg', d.catno)}${fact('Codi de barres', d.barcode)}${fact('Edició', d.edicio)}
           ${fact('Gènere', d.genere)}${fact('Estil', d.estil)}${fact('Qualitat', d.qualitat)}
           ${fact('Usuari', d.usuari)}
@@ -733,7 +777,7 @@ function renderSheet(){
       </div>
     </div>
     <div class="plexbar" id="plexBar"></div>
-    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3>${formatsHTML(d)}<ol data-fmt-list="mp3" class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>${temesFormatsHTML(d)}`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>

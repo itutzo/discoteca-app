@@ -2076,6 +2076,7 @@ def sincronitza_discogs():
     for d in discs:
         per_art.setdefault(N(artistes.get(str(d['artista']), '')), []).append(d)
     nous, actualitzats, informe = 0, 0, []
+    ed_col = {}         # edicions de la teva col·lecció per disc i suport: quin CD i quin vinil tens (14/11/2026)
     for r in col:
         b = r.get('basic_information', {})
         art = re.sub(r'\s*\(\d+\)$', '', (b.get('artists') or [{}])[0].get('name', ''))
@@ -2103,6 +2104,12 @@ def sincronitza_discogs():
             per_art.get(N(art), []).remove(dup) if dup in per_art.get(N(art), []) else None
             informe.append(f"FUSIONAT {art} - {tit}")
         if d:
+            desc = [x for f in b.get('formats', []) for x in (f.get('descriptions') or []) if x not in ('Album', 'LP', 'Stereo')]
+            e = {'dg': b.get('id'), 'any': str(b.get('year') or '') if b.get('year') else '', 'segell': seg, 'catno': cat,
+                 'format': ', '.join(dict.fromkeys(desc))}
+            llista = ed_col.setdefault(str(d['id']), {}).setdefault(sup, [])
+            if not any(x['dg'] == e['dg'] for x in llista):
+                llista.append({k: v for k, v in e.items() if v})
             canvi = afegeix_suport(d, sup)
             if not d.get('discogs_release'):
                 d['discogs_release'] = b.get('id'); canvi = True
@@ -2126,6 +2133,29 @@ def sincronitza_discogs():
             per_art.setdefault(N(art), []).append(d)
             nous += 1
             informe.append(f"NOU    {sup.upper():3} {art} - {tit}  (no estava al catàleg: creat com a pendent)")
+    if col:
+        # els temes de cada edició (poden ser diferents: bonus, cares del vinil...), perquè la fitxa els mostri per
+        # format; es guarden els que ja hi havia i se'n baixen com a molt `edicions_temes_per_nit` de nous per execució
+        vells = {x.get('dg'): x.get('temes') for d in discs for L in (d.get('edicions') or {}).values() for x in L if x.get('temes')}
+        falten = int(CFG.get('edicions_temes_per_nit', 150) or 150)
+        for d in discs:
+            if str(d.get('id')) in ed_col:
+                for L in ed_col[str(d['id'])].values():
+                    for e in L:
+                        if vells.get(e['dg']):
+                            e['temes'] = vells[e['dg']]
+                        elif falten > 0:
+                            falten -= 1
+                            try:
+                                rel = DG.release(e['dg'])
+                                if rel and rel.get('temes'):
+                                    e['temes'] = [[t.get('n', ''), t.get('titol', '')] for t in rel['temes']]
+                            except Exception as ex:
+                                log(f'  Discogs: error llegint els temes de l\'edició {e["dg"]}: {ex!r}')
+                                falten = 0
+                d['edicions'] = ed_col[str(d['id'])]
+            else:
+                d.pop('edicions', None)
     desa('discs.json', discs)
     with open(os.path.join(comu.DADES, 'discogs_informe.txt'), 'w', encoding='utf-8') as f:
         f.write(f'Sincronització amb Discogs {datetime.datetime.now():%d/%m/%Y %H:%M}\n\n' + '\n'.join(sorted(informe)))
@@ -2540,7 +2570,7 @@ def detecta_versio(d, rel_actual=None):
             n_orig = len((orig or {}).get('temes') or []) or n_seus
             return {'re': re_, 'any': any_r, 'segell': r.get('segell', ''), 'pais': r.get('pais', ''),
                     'format': ', '.join(dict.fromkeys((r.get('formats') or []) + desc)), 'dg': r.get('id'),
-                    'extra': max(0, len(meus) - n_orig), 'nota': nota, 'font': 'discogs'}
+                    'extra': max(0, len(meus) - n_orig), 'nota': nota, 'font': 'discogs', 'orig': original}
     # sense Discogs (o cap edició no encaixa): només el que diu el nom de la carpeta
     if nota and (_REED.search(nota) or (any_nota and original and any_nota != original)):
         return {'re': True, 'any': any_nota if any_nota != original else '', 'nota': nota, 'font': 'carpeta'}
