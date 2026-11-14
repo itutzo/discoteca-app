@@ -715,12 +715,35 @@ function formatsHTML(d){
   return `<div class="chips fmts" style="margin:0 0 10px"><button class="chip" type="button" data-fmt="mp3" aria-pressed="true">${d.bitrate === 'Flac' ? 'FLAC' : 'MP3'} (carpeta)</button>`
     + l.map(x => `<button class="chip" type="button" data-fmt="${x.s}:${x.i}" aria-pressed="false">${nom[x.s]}${x.e.any ? ' ' + esc(x.e.any) : ''} · ${x.e.temes.length}</button>`).join('') + '</div>';
 }
+// el mateix tema escrit amb una errada («Wister Time» = «Wiser Time»): 85 % de semblança i els mateixos números
+function semblanca(a, b){
+  if(!a || !b) return 0;
+  const n = a.length, m = b.length; let ant = Array.from({length: m + 1}, (_, j) => j);
+  for(let i = 1; i <= n; i++){
+    const ara = [i];
+    for(let j = 1; j <= m; j++) ara[j] = Math.min(ant[j] + 1, ara[j - 1] + 1, ant[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    ant = ara;
+  }
+  return 1 - ant[m] / Math.max(n, m);
+}
+function temaSemblant(tit, temes){
+  const k = clauDisc(tit), xs = k.match(/\d+/g) || [];
+  if(k.length < 4) return null;
+  let millor = null, punts = 0;
+  for(const t of temes || []){
+    const c = clauDisc(t[1] || '');
+    if(String(c.match(/\d+/g) || []) !== String(xs)) continue;
+    const s = semblanca(k, c);
+    if(s >= 0.85 && s > punts){ millor = t; punts = s; }
+  }
+  return millor;
+}
 function temesFormatsHTML(d){
   // el mateix tema de la fitxa (comparat sense el que va entre parèntesis): se n'agafen el compositor i l'estrella ★
   const meus = new Map();
   (d.temes || []).forEach(t => [neteja(t[1]), clauDisc(t[1])].forEach(k => { if(k && !meus.has(k)) meus.set(k, t); }));
   return edsAmbTemes(d).map(x => `<ol class="tracks alt" data-fmt-list="${x.s}:${x.i}" hidden>${x.e.temes.map(t => {
-      const m = meus.get(neteja(t[1])) || meus.get(clauDisc(t[1])), no = meus.size && !m;
+      const m = meus.get(neteja(t[1])) || meus.get(clauDisc(t[1])) || temaSemblant(t[1], d.temes), no = meus.size && !m;
       const est = m && (m[6] || m[3] === '*');
       return `<li><span class="n">${esc(t[0] || '')}</span><span class="s">${est ? '<span class="star" title="Tema destacat">★</span>' : ''}</span><span>${esc(t[1])}${no ? '<span class="tag">No és a la carpeta</span>' : ''}</span><span class="c">${esc(m ? m[2] || '' : '')}</span></li>`;
     }).join('')}</ol>`).join('');
