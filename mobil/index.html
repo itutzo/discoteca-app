@@ -707,6 +707,27 @@ function edicioText(e, orig){
   const re = (orig && e.any && e.any > orig) || /Reissue|Remaster|Repress|Deluxe|Expanded/i.test(e.format || '');
   return [(re ? 'Reedició' : 'Original') + (e.any ? ' ' + e.any : ''), e.segell, e.catno, e.format].filter(Boolean).join(' · ');
 }
+// temes de cada format: botons MP3 / CD / Vinil sobre la llista (les edicions de la col·lecció de Discogs porten els seus temes)
+function edsAmbTemes(d){ const ed = d.edicions || {}; return ['cd', 'lp'].flatMap(s => (ed[s] || []).map((e, i) => ({s, i, e}))).filter(x => x.e.temes?.length); }
+function formatsHTML(d){
+  const l = edsAmbTemes(d); if(!l.length) return '';
+  const nom = {cd: 'CD', lp: 'Vinil'};
+  return `<div class="chips fmts" style="margin:0 0 10px"><button class="chip" type="button" data-fmt="mp3" aria-pressed="true">${d.bitrate === 'Flac' ? 'FLAC' : 'MP3'} (carpeta)</button>`
+    + l.map(x => `<button class="chip" type="button" data-fmt="${x.s}:${x.i}" aria-pressed="false">${nom[x.s]}${x.e.any ? ' ' + esc(x.e.any) : ''} · ${x.e.temes.length}</button>`).join('') + '</div>';
+}
+function temesFormatsHTML(d){
+  const meus = new Set((d.temes || []).flatMap(t => [neteja(t[1]), clauDisc(t[1])]));
+  return edsAmbTemes(d).map(x => `<ol class="tracks alt" data-fmt-list="${x.s}:${x.i}" hidden>${x.e.temes.map(t => {
+      const no = meus.size && !meus.has(neteja(t[1])) && !meus.has(clauDisc(t[1]));
+      return `<li><span class="n">${esc(t[0] || '')}</span><span class="s"></span><span>${esc(t[1])}${no ? '<span class="tag">No és a la carpeta</span>' : ''}</span><span class="c"></span></li>`;
+    }).join('')}</ol>`).join('');
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-fmt]'); if(!b) return;
+  const box = b.closest('#sheet') || document;
+  box.querySelectorAll('[data-fmt]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  box.querySelectorAll('[data-fmt-list]').forEach(o => { o.hidden = o.dataset.fmtList !== b.dataset.fmt; });
+});
 function edicionsHTML(d){
   const sups = supList(d), ed = d.edicions || {};
   if(sups.length < 2 && !ed.cd && !ed.lp) return fact('La teva edició', versioText(d));
@@ -756,7 +777,7 @@ function renderSheet(){
       </div>
     </div>
     <div class="plexbar" id="plexBar"></div>
-    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3><ol class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>`:''}
+    ${t.length?`<h3 class="sec">Temes · ${t.length}</h3>${formatsHTML(d)}<ol data-fmt-list="mp3" class="tracks${sides.size>1?' discs':''}">${t.map(x=>`<li><span class="n">${esc(sides.size>1&&x[3]&&x[3]!=='*'?String(x[3]).replace(/^CD\s*(\d+)$/i,'Disc $1')+' '+String(x[0]||'').padStart(2,'\u00a0'):(x[0]||''))}</span><span class="s">${(x[6]||x[3]==='*')?'<span class="star" title="Tema destacat">★</span>':''}</span><span>${esc(x[1])}${x[4]?'<span class="tag">Bonus</span>':''}${x[5]?'<span class="tag">Inèdit</span>':''}</span><span class="c">${esc(x[2])}</span></li>`).join('')}</ol>${temesFormatsHTML(d)}`:''}
     ${p.length?`<h3 class="sec">Intèrprets · ${p.length}</h3><div class="people">${p.map(x=>`<div><button class="link" type="button" data-info="${esc(x[0])}" data-banda="${esc(artName(d.artista))}">${esc(x[0])}</button>${x[1]?` <span>· ${esc(x[1])}</span>`:''}${x[2]?'<span class="tag">Convidat</span>':''}</div>`).join('')}</div>`:''}
     <div id="similars">${simHTML = similarsHTML(d)}</div>
     <div id="discover"></div>

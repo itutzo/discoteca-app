@@ -2134,8 +2134,25 @@ def sincronitza_discogs():
             nous += 1
             informe.append(f"NOU    {sup.upper():3} {art} - {tit}  (no estava al catàleg: creat com a pendent)")
     if col:
+        # els temes de cada edició (poden ser diferents: bonus, cares del vinil...), perquè la fitxa els mostri per
+        # format; es guarden els que ja hi havia i se'n baixen com a molt `edicions_temes_per_nit` de nous per execució
+        vells = {x.get('dg'): x.get('temes') for d in discs for L in (d.get('edicions') or {}).values() for x in L if x.get('temes')}
+        falten = int(CFG.get('edicions_temes_per_nit', 150) or 150)
         for d in discs:
             if str(d.get('id')) in ed_col:
+                for L in ed_col[str(d['id'])].values():
+                    for e in L:
+                        if vells.get(e['dg']):
+                            e['temes'] = vells[e['dg']]
+                        elif falten > 0:
+                            falten -= 1
+                            try:
+                                rel = DG.release(e['dg'])
+                                if rel and rel.get('temes'):
+                                    e['temes'] = [[t.get('n', ''), t.get('titol', '')] for t in rel['temes']]
+                            except Exception as ex:
+                                log(f'  Discogs: error llegint els temes de l\'edició {e["dg"]}: {ex!r}')
+                                falten = 0
                 d['edicions'] = ed_col[str(d['id'])]
             else:
                 d.pop('edicions', None)
