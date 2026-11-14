@@ -204,6 +204,7 @@ fieldset.sups input{width:auto}
         <button class="chip" type="button" data-sup="lp" aria-pressed="false">Vinil</button>
         <button class="chip" type="button" data-sup="fis" aria-pressed="false">Físics</button>
         <button class="chip" type="button" data-sup="pend" aria-pressed="false">Pendents</button>
+        <button class="chip" type="button" data-sup="inc" aria-pressed="false" title="Discos amb algun camp buit">Incomplets</button>
         <button class="chip recbtn" type="button" id="recsBtn">★ Per a tu</button>
       </div>
       <select id="fEstil" aria-label="Estil"><option value="">Tots els estils</option></select>
@@ -626,11 +627,21 @@ async function milloraSimilars(d){
 function trackList(d){ return d.temes || []; }
 function peopleList(d){ return d.interprets || []; }
 
+// Camps que compten per a «complet del tot» (els mateixos que incomplet() de completar.py).
+// La nota d'AllMusic no hi compta: AllMusic bloqueja l'accés i ja no es pot omplir.
+const CAMPS_COMPLET = [['any','Any'],['genere','Gènere'],['estil','Estil'],['segell','Segell'],['bitrate','Bitrate'],['caratula','Caràtula'],['temes','Temes'],['interprets','Intèrprets']];
+function faltaDades(d){
+  const f = CAMPS_COMPLET.filter(([k]) => { const v = d[k]; return v == null || v === '' || (Array.isArray(v) && !v.length); }).map(([,l]) => l);
+  const sense = (d.temes || []).filter(t => t.length > 2 && !t[2]).length;
+  if(sense) f.push(sense === (d.temes || []).length ? 'compositors' : `compositor de ${sense} ${sense === 1 ? 'tema' : 'temes'}`);
+  return f;
+}
 function filtered(){
   const words = norm(state.q).split(/\s+/).filter(Boolean);
   let r = discs.filter(d => {
     const L = supList(d);
     if(state.sup === 'pend'){ if(d.estat !== 'pendent') return false; }
+    else if(state.sup === 'inc'){ if(!faltaDades(d).length) return false; }
     else if(state.sup === 'fis'){ if(!L.some(s=>PHYS.includes(s))) return false; }
     else if(state.sup && !L.includes(state.sup)) return false;
     if(state.estil && d.estil !== state.estil) return false;
@@ -682,6 +693,7 @@ function renderSheet(){
   <div class="body">
     ${d.revisar?'<div class="notice">Completat automàticament: revisa-ho quan puguis. Si tot és correcte, edita i desa per treure aquest avís.</div>':''}
     ${d.estat==='pendent'?'<div class="notice">Pendent de completar: el procés automàtic hi afegirà les dades que falten.</div>':''}
+    ${(()=>{ const f = faltaDades(d); return f.length ? `<div class="notice">Hi falta: ${esc(f.join(', '))}. Les fonts automàtiques no ho tenen; es pot omplir a mà amb «Edita».</div>` : ''; })()}
     ${d.falten?.length?`<div class="notice">A la carpeta hi falten ${d.falten.length} ${d.falten.length===1?'tema':'temes'} respecte al disc de Discogs: ${esc(d.falten.join(', '))}.</div>`:''}
     ${d.auto?.length?`<div class="notice">Dades omplertes automàticament, per revisar: ${esc(d.auto.map(k=>LABELS[k]||k).join(', '))}.</div>`:''}
     ${d.titol_abans&&d.titol_abans!==d.titol?`<div class="notice">Títol corregit automàticament (era «${esc(d.titol_abans)}»): Discogs té aquest disc amb els mateixos temes i un títol gairebé igual.</div>`:''}
