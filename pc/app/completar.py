@@ -1181,6 +1181,11 @@ def treu_dades_mb(d, mb, dg, auto, fonts_d, estils_meus):
         auto.discard('estil')
 
 
+def comu_estil(estils_meus, x):
+    """L'estil que ja fas servir, encara que la font l'escrigui diferent («Blues-Rock» → «Blues Rock»)."""
+    return estils_meus.get(N(x)) or estils_meus.get(comu.clau_estil(x))
+
+
 def completa(d, artistes, estils_meus):
     nom_art = artistes.get(str(d['artista']), '')
     titol = d.get('titol', '')
@@ -1324,7 +1329,7 @@ def completa(d, artistes, estils_meus):
         fonts_d['AllMusic'] = am['url']
         omple('any', am.get('any') or str(((dg or {}).get('master') or {}).get('year') or ''))
         omple('genere', GEN.get(N(am.get('genere', '').split(',')[0]), am.get('genere', '').split(',')[0]))
-        est = next((estils_meus[N(x)] for x in am.get('estils', []) if N(x) in estils_meus), (am.get('estils') or [None])[0])
+        est = next((comu_estil(estils_meus, x) for x in am.get('estils', []) if comu_estil(estils_meus, x)), (am.get('estils') or [None])[0])
         omple('estil', est)
         omple('clasamg', am.get('amg'))
     elif dg or mb:
@@ -1335,7 +1340,7 @@ def completa(d, artistes, estils_meus):
               or next((GEN[N(x)] for x in mb_.get('generes', []) if N(x) in GEN), None))
         # estil: primer un dels que ja fas servir, després el de Discogs i, si no, el de MusicBrainz
         cands = dg_.get('estils', []) + mb_.get('generes', [])
-        est = next((estils_meus[N(x)] for x in cands if N(x) in estils_meus), None) or \
+        est = next((comu_estil(estils_meus, x) for x in cands if comu_estil(estils_meus, x)), None) or \
             (dg_.get('estils') or [None])[0] or ' '.join(w.capitalize() for w in (mb_.get('generes') or [''])[0].split()) or None
         omple('estil', est)
 
@@ -1941,10 +1946,47 @@ def normalitza_notes():
             log(f'Notes: {n} notes passades a punt decimal')
 
 
+def unifica_estils():
+    """Norma de l'Ignasi (14/11/2026): cada estil i cada gènere surt un sol cop, amb el nom més usat a les fonts
+    (vegeu comu.unifica_estils_llista). Es fa a cada execució, també amb el que arriba del mòbil i dels discos nous.
+    El primer cop guarda una còpia de discs.json a dades\\copies\\estils-discs-abans.json."""
+    lf = llegeix('lastfm.json', {})
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n, canvis = 0, {}
+        for camp in ('estil', 'genere'):
+            comptats = {}
+            for d in discs:
+                v = d.get(camp)
+                if isinstance(v, str) and v.strip():
+                    comptats[v] = comptats.get(v, 0) + 1
+            mapa = comu.unifica_estils_llista(list(comptats), lf, comptats)
+            for d in discs:
+                v = d.get(camp)
+                if isinstance(v, str) and v in mapa and mapa[v] != v:
+                    canvis.setdefault((camp, v, mapa[v]), 0)
+                    canvis[(camp, v, mapa[v])] += 1
+                    d[camp] = mapa[v]
+                    n += 1
+        if n:
+            copia = os.path.join(comu.COPIES, 'estils-discs-abans.json')
+            if not os.path.exists(copia):
+                shutil.copy2(os.path.join(comu.DADES, 'discs.json'), copia)
+            desa('discs.json', discs)
+            for (camp, v, b), k in sorted(canvis.items()):
+                log(f'  {camp.capitalize()}: «{v}» → «{b}» ({k})')
+            log(f'Estils: {n} estils i gèneres escrits diferent unificats')
+
+
 def tanda(mode, n, id_=None):
     artistes = llegeix('artistes.json', {})
     discs = llegeix('discs.json', [])
-    estils_meus = {N(d['estil']): d['estil'] for d in discs if d.get('estil')}
+    # un estil de Discogs o MusicBrainz escrit diferent («Pop-Rock», «Blues-Rock») agafa el nom que ja fas servir
+    estils_meus = {}
+    for d in discs:
+        if d.get('estil'):
+            estils_meus.setdefault(N(d['estil']), d['estil'])
+            estils_meus.setdefault(comu.clau_estil(d['estil']), d['estil'])
     if mode == 'disc':
         cua = [d for d in discs if str(d.get('id')) == str(id_)]
     else:
@@ -2853,6 +2895,10 @@ def main():
     except Exception as e:
         log(f'Notes: error {e!r}')
     try:
+        unifica_estils()
+    except Exception as e:
+        log(f'Estils: error {e!r}')
+    try:
         unifica_variables()
     except Exception as e:
         log(f'Bitrate: error {e!r}')
@@ -2902,6 +2948,10 @@ def main():
                 log(f'Pendents: error netejant noms {e!r}')
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)
+            try:
+                unifica_estils()        # els estils dels discos nous, amb el mateix nom que els que ja hi ha
+            except Exception as e:
+                log(f'Estils: error {e!r}')
             # els discos nous ja tenen l'any: la carpeta passa a «Artista - Any - Títol» i els arxius, al format
             try:
                 formata_tots()

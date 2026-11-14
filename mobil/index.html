@@ -250,6 +250,8 @@ const $ = s => document.querySelector(s);
 const urlSegur = u => /^https?:\/\//i.test(String(u||'')) ? esc(u) : '#';   // mai «javascript:»
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const norm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+// clau d'un estil per comparar-lo encara que estigui escrit diferent (majúscules, accents, espais, guions, barres, «&»/«n'»)
+const kEstil = s => norm(String(s ?? '').replace(/([a-z])7([a-z])/gi, '$1/$2')).replace(/&|\+/g, ' and ').replace(/\bn'|\bn\b/g, ' and ').replace(/[^a-z0-9]/g, '');
 const PAGE = 120;
 
 let artistes = {}, discs = [], byId = new Map(), newArtists = {};
@@ -469,7 +471,10 @@ function rebuild(){
     const t = trackList(d), p = peopleList(d);
     d._s = norm([artName(d.artista), d.titol, d.any, d.estil, d.genere, d.notes, t.map(x=>x[1]).join(' '), p.map(x=>x[0]).join(' ')].join(' '));
   }
-  const estils = [...new Set(discs.map(d=>d.estil).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ca'));
+  // un sol cop cada estil encara que s'hagi escrit diferent («Pop-Rock», «Pop/Rock»): es mostra el nom més usat
+  const perK = new Map();
+  for(const d of discs){ if(!d.estil) continue; const k = kEstil(d.estil), m = perK.get(k) || new Map(); m.set(d.estil, (m.get(d.estil)||0)+1); perK.set(k, m); }
+  const estils = [...perK.values()].map(m => [...m].sort((a,b)=>b[1]-a[1])[0][0]).sort((a,b)=>a.localeCompare(b,'ca'));
   const sel = $('#fEstil'), keep = sel.value;
   sel.innerHTML = '<option value="">Tots els estils</option>' + estils.map(e=>`<option>${esc(e)}</option>`).join('');
   sel.value = keep;
@@ -644,7 +649,7 @@ function filtered(){
     else if(state.sup === 'inc'){ if(!faltaDades(d).length) return false; }
     else if(state.sup === 'fis'){ if(!L.some(s=>PHYS.includes(s))) return false; }
     else if(state.sup && !L.includes(state.sup)) return false;
-    if(state.estil && d.estil !== state.estil) return false;
+    if(state.estil && kEstil(d.estil) !== kEstil(state.estil)) return false;
     if(state.nota && !(parseFloat(String(d.classificacio).replace(',','.')) >= Number(state.nota))) return false;
     return words.every(w => d._s.includes(w));
   });
