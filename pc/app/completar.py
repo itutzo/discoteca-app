@@ -12,7 +12,7 @@
 Regles: només omple camps buits, mai no toca la classificació personal ni les notes,
 i marca tot el que afegeix com a «automàtic» perquè ho puguis revisar.
 """
-import argparse, datetime, json, os, re, shutil, sys, time
+import argparse, datetime, json, os, re, shutil, sys, time, unicodedata
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -2461,6 +2461,129 @@ def revisa_falten(n=150):
     return len(resultat)
 
 
+# ------------------------------------------------------------------ quina edició tens (14/11/2026)
+# Norma de l'Ignasi: la Discoteca ha de detectar si el disc que té és una reedició i quina, a banda de l'any del disc
+# original (el camp `any`, que no es toca). Es fa sense obrir els arxius: amb les notes del nom de la carpeta
+# («(Reissue 2009 Rock Candy)», «[Remastered]», «Deluxe»), el nombre i els noms dels temes de la carpeta, i les
+# edicions de Discogs del mateix disc (es tria la que té més temes iguals). Resultat al camp `versio`.
+_REED = re.compile(r'\b(re-?issue|re-?issued|reedici\w*|reedit\w*|remaster\w*|re-?master\w*|deluxe|expanded|anniversary|'
+                   r'edition|edición|edicio|special|collector|legacy|bonus)\b', re.I)
+_REED_DG = re.compile(r'\b(RE|RM|Reissue|Remastered|Deluxe Edition|Expanded|Repress)\b', re.I)
+
+
+def notes_carpeta(carpeta, titol=''):
+    """Les notes entre parèntesis o claudàtors del nom de la carpeta i del títol que parlen de l'edició:
+    torna (text, any, paraules): «Circus Of Power (Reissue 2009 Rock Candy)» -> ('Reissue 2009 Rock Candy', '2009', 'rock candy')."""
+    trossos = re.findall(r'[\(\[]([^\(\)\[\]]+)[\)\]]', f'{carpeta or ""} {titol or ""}')
+    trossos = [t.strip() for t in trossos if _REED.search(t) or re.search(r'\b(19|20)\d{2}\b', t)]
+    text = ' · '.join(dict.fromkeys(trossos))
+    anys = re.findall(r'\b((?:19|20)\d{2})\b', text)
+    paraules = re.sub(r'\b(19|20)\d{2}\b', ' ', _REED.sub(' ', text))
+    paraules = re.sub(r'\b(cd|mp3|flac|320|256|192|kbps|version|versión|remasterizado|the|de|del|la|el|y|and|by)\b', ' ', paraules, flags=re.I)
+    return text, (anys[0] if anys else ''), _paraules(paraules)
+
+
+def _paraules(s):
+    """Text en minúscules, sense accents ni signes, per comparar noms de segell."""
+    return ' '.join(re.findall(r'[a-z0-9]+', unicodedata.normalize('NFD', str(s or '')).encode('ascii', 'ignore').decode().lower()))
+
+
+def detecta_versio(d, rel_actual=None):
+    """Quina edició del disc és la de la carpeta. Torna el diccionari per al camp `versio` o None si no se'n sap res.
+    `re`: True si és una reedició; `any`, `segell`, `pais`, `format`: de l'edició triada; `extra`: temes de més que
+    l'original; `nota`: el que diu el nom de la carpeta; `dg`: l'edició de Discogs; `font`: d'on surt."""
+    meus = [t[1] for t in d.get('temes') or [] if len(t) > 1 and t[1]]
+    nota, any_nota, paraules = notes_carpeta(d.get('carpeta'), d.get('titol'))
+    original = str(d.get('any') or '')[:4]
+    rel = rel_actual or (DG.release(d['discogs_release']) if d.get('discogs_release') else None)
+    mid = (rel or {}).get('master_id')
+    millor = None
+    if mid and len(meus) >= 3:
+        m = DG.api(f'/masters/{mid}') or {}
+        original = str(m.get('year') or original or '')[:4]
+        vers = DG.versions(mid)
+        # primer, les edicions que encaixen amb el que diu la carpeta (any, segell, reedició); després, les més antigues
+        def pista(v):
+            p = 0
+            if any_nota and str(v.get('released') or '')[:4] == any_nota:
+                p += 4
+            seg = _paraules(v.get('label'))
+            if paraules and len(paraules) >= 3 and (paraules in seg or (seg and seg in paraules)):
+                p += 3
+            if nota and _REED_DG.search(str(v.get('format') or '')):
+                p += 1
+            if re.search(r'\b(CD|File)\b', str(v.get('format') or '')):
+                p += 1
+            return p
+        cands = sorted(vers, key=lambda v: (-pista(v), str(v.get('released') or '9999')))
+        ids = [m.get('main_release')] + [v.get('id') for v in cands[:4]]
+        vist = set()
+        for i in ids:
+            if not i or i in vist:
+                continue
+            vist.add(i)
+            r = rel if rel and rel.get('id') == i else DG.release(i)
+            if not r or not r.get('temes'):
+                continue
+            seus = [t['titol'] for t in r['temes']]
+            igual = comu.temes_coincidents(meus, seus)
+            v = next((x for x in vers if x.get('id') == i), {})
+            punts = igual - 0.5 * abs(len(seus) - len(meus)) + 0.3 * pista(v)
+            if igual >= 0.6 * len(meus) and (not millor or punts > millor[0]):
+                millor = (punts, r, len(seus), i == m.get('main_release'))
+        if millor:
+            _, r, n_seus, principal = millor
+            any_r = str(r.get('any') or '')[:4]
+            desc = [x for x in r.get('desc') or [] if x not in ('Album', 'LP', 'Stereo')]
+            re_ = bool((any_r and original and any_r > original) or _REED_DG.search(' '.join(desc)))
+            orig = DG.release(m['main_release']) if m.get('main_release') and not principal else r
+            n_orig = len((orig or {}).get('temes') or []) or n_seus
+            return {'re': re_, 'any': any_r, 'segell': r.get('segell', ''), 'pais': r.get('pais', ''),
+                    'format': ', '.join(dict.fromkeys((r.get('formats') or []) + desc)), 'dg': r.get('id'),
+                    'extra': max(0, len(meus) - n_orig), 'nota': nota, 'font': 'discogs'}
+    # sense Discogs (o cap edició no encaixa): només el que diu el nom de la carpeta
+    if nota and (_REED.search(nota) or (any_nota and original and any_nota != original)):
+        return {'re': True, 'any': any_nota if any_nota != original else '', 'nota': nota, 'font': 'carpeta'}
+    return None
+
+
+def revisa_versions(n=100):
+    """Cada nit, una tanda de discos amb carpeta: quina edició és la de la carpeta (`detecta_versio()`). Es torna a
+    mirar si la carpeta canvia (`nas_m`) o al cap de 180 dies. Unes 6-8 consultes a Discogs per disc."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+    vell = (datetime.date.today() - datetime.timedelta(days=180)).isoformat()
+    artistes = llegeix('artistes.json', {})
+    cua = [d for d in discs if d.get('carpeta') and d.get('temes') and not cancons_soltes(artistes.get(str(d.get('artista')), ''), d.get('titol', ''))
+           and (not d.get('ver_rev') or d.get('ver_m') != d.get('nas_m') or d['ver_rev'] < vell)][:n]
+    if not cua:
+        return 0
+    resultat = {}
+    for d in cua:
+        try:
+            resultat[d['id']] = detecta_versio(d)
+        except Exception as e:
+            log(f'  Edició: error {e!r} ({d.get("carpeta")})')
+            if 'HTTP 4' not in repr(e):
+                break
+            resultat[d['id']] = None
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n_re = 0
+        for d in discs:
+            if d.get('id') in resultat:
+                v = resultat[d['id']]
+                d['ver_rev'], d['ver_m'] = AVUI, d.get('nas_m')
+                if v:
+                    d['versio'] = v
+                    n_re += bool(v.get('re'))
+                else:
+                    d.pop('versio', None)
+        desa('discs.json', discs)
+    log(f'Edicions: {len(resultat)} discos mirats, {n_re} són reedicions')
+    return len(resultat)
+
+
 def neteja_temes_fitxa(d, nom_art, ruta=None):
     """Temes de la fitxa trets dels noms dels arxius amb el nom del grup davant («Dozer - Rising»): passen al títol net
     (`comu.neteja_titols_temes()`) i la carpeta es torna a formatar perquè els arxius es diguin igual. Només si els temes
@@ -2882,6 +3005,13 @@ def main():
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
         return
+    if a.mode == 'edicions':
+        # només mirar quina edició és cada disc (reedicions), una tanda de --n discos
+        try:
+            revisa_versions(a.n)
+        except Exception as e:
+            log(f'Edicions: error {e!r}')
+        return
     try:
         migra_destacats()
     except Exception as e:
@@ -2928,6 +3058,10 @@ def main():
                 revisa_titols(int(CFG.get('titols_per_nit', 100) or 100))
             except Exception as e:
                 log(f'Títols: error {e!r}')
+            try:
+                revisa_versions(int(CFG.get('edicions_per_nit', 100) or 100))
+            except Exception as e:
+                log(f'Edicions: error {e!r}')
         try:
             arregla_noms_nas()
         except Exception as e:

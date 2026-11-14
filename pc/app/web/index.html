@@ -470,7 +470,7 @@ function filtered(){
 function cardHTML(d){
   return `<button class="card" type="button" data-open="${esc(d.id)}">${sleeveHTML(d,false)}
     <span class="t">${esc(d.titol||'(sense títol)')}</span><span class="a">${esc(artName(d.artista))}</span>
-    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.classificacio?`<span>★ ${esc(decimal(d.classificacio))}</span>`:''}</span></button>`;
+    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.versio?.re?`<span title="${esc(versioText(d))}">Reedició${d.versio.any?' '+esc(d.versio.any):''}</span>`:''}${d.classificacio?`<span>★ ${esc(decimal(d.classificacio))}</span>`:''}</span></button>`;
 }
 function render(){
   const list = filtered();
@@ -491,6 +491,13 @@ function openSheet(id, edit=false){
 }
 function closeSheet(){ recsOpen = false; $('#sheet').hidden = true; $('#scrim').hidden = true; document.body.style.overflow=''; current=null; editing=false; }
 function fact(k, v){ return v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : ''; }
+// quina edició és la de la carpeta (camp `versio`, el posa completar.py): «Reedició 2009 · Rock Candy · UK · CD, Remastered · 2 temes extra»
+function versioText(d){
+  const v = d.versio; if(!v) return '';
+  const p = [v.re ? 'Reedició' + (v.any ? ' ' + v.any : '') : 'Original' + (v.any ? ' (' + v.any + ')' : ''), v.segell, v.pais, v.format,
+             v.extra ? v.extra + (v.extra === 1 ? ' tema extra' : ' temes extra') : '', v.font === 'carpeta' && v.nota ? 'segons el nom de la carpeta: «' + v.nota + '»' : ''];
+  return p.filter(Boolean).join(' · ');
+}
 function renderSheet(){
   const d = current, sh = $('#sheet');
   const t = trackList(d), p = peopleList(d);
@@ -515,10 +522,12 @@ function renderSheet(){
         <div class="score">
           <div><b>${d.classificacio?esc(decimal(d.classificacio)):'—'}</b><span>La meva nota</span></div>
           ${d.clasamg && d.clasamg!=='sin'?`<div><b>${esc(decimal(d.clasamg))}</b><span>AllMusic</span></div>`:''}
-          ${d.any?`<div><b>${esc(d.any)}</b><span>Any</span></div>`:''}
+          ${d.any?`<div><b>${esc(d.any)}</b><span>${d.versio?.re?'Any de l\'original':'Any'}</span></div>`:''}
+          ${d.versio?.re&&d.versio.any?`<div><b>${esc(d.versio.any)}</b><span>Reedició</span></div>`:''}
         </div>
         <dl class="facts">
           ${fact('Suport', supList(d).map(s=>(SUPS.find(x=>x[0]===s)||[s,s.toUpperCase()])[1]).join(' · '))}${fact('Bitrate', d.bitrate && (/^\d+$/.test(d.bitrate)? d.bitrate+' kbps' : d.bitrate))}
+          ${fact('La teva edició', versioText(d))}
           ${fact('Segell', d.segell)}${fact('Núm. de catàleg', d.catno)}${fact('Codi de barres', d.barcode)}${fact('Edició', d.edicio)}
           ${fact('Gènere', d.genere)}${fact('Estil', d.estil)}${fact('Qualitat', d.qualitat)}
           ${fact('Usuari', d.usuari)}
@@ -1146,7 +1155,7 @@ async function obreInfo(nom, banda){
     const filaDisc = x => {
       const d = elTinc(x);
       return `<li><button class="link dgb" type="button" data-dg="${esc(x.id)}" data-dg-meu="${d ? esc(d.id) : ''}"><span class="fl">▸</span> ${esc(x.title)}</button>
-        <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}</span>${d ? `<span class="tag on">El tens</span>` : ''}
+        <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}</span>${d ? `<span class="tag on">El tens</span>` : ''}${d?.versio?.re ? `<span class="who2" title="${esc(versioText(d))}"> · la teva: reedició${d.versio.any ? ' ' + esc(d.versio.any) : ''}</span>` : ''}
         ${d ? `<button class="link who2 vf" type="button" data-open-info="${esc(d.id)}" title="Obre la teva fitxa">fitxa →</button>` : ''}<div class="dgt" hidden></div></li>`;
     };
     const nTinc = discosMB.filter(elTinc).length;

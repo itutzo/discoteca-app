@@ -580,6 +580,8 @@ class Discogs:
                'catno': ', '.join(dict.fromkeys(l.get('catno', '') for l in rel.get('labels', []) if l.get('catno') and l.get('catno') != 'none')),
                'barcode': next((i['value'] for i in rel.get('identifiers', []) if i.get('type') == 'Barcode'), ''),
                'formats': [f.get('name') for f in rel.get('formats', [])],
+               'desc': list(dict.fromkeys(x for f in rel.get('formats', []) for x in (f.get('descriptions') or []))),
+               'master_id': rel.get('master_id'),
                'artista': ', '.join(re.sub(r'\s*\(\d+\)$', '', a['name']) for a in rel.get('artists', [])),
                'artista_id': (rel.get('artists') or [{}])[0].get('id'),
                'titol': rel.get('title', ''),
@@ -589,6 +591,16 @@ class Discogs:
                           'compositors': [re.sub(r'\s*\(\d+\)$', '', e['name']) for e in t.get('extraartists', [])
                                           if re.search(r'Written|Composed|Songwriter|Music By|Lyrics', e.get('role', ''), re.I)]}
                          for t in _pistes(rel.get('tracklist', []))]}
+        return out
+
+    def versions(self, master_id, pagines=3):
+        """Totes les edicions d'un disc (versió principal de Discogs): id, any, segell, país i format, sense els temes."""
+        out = []
+        for p in range(1, pagines + 1):
+            r = self.api(f'/masters/{master_id}/versions', per_page=100, page=p) or {}
+            out += r.get('versions') or []
+            if p >= ((r.get('pagination') or {}).get('pages') or 1):
+                break
         return out
 
     def membres(self, artista_id):
