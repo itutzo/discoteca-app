@@ -508,20 +508,27 @@ class Discogs:
         semblant = lambda a, b: difflib.SequenceMatcher(None, a, b).ratio()
         generics = re.compile(r'^(intro|outro|interlude|untitled|hiddentrack|bonustrack|track\d*|pista\d*|\d+)$')
         # els temes més característics: els títols més llargs que no són genèrics («Intro», «Untitled»)
-        noms = [t for t in (temes or []) if NT(t) and not generics.match(NT(t))]
-        noms = sorted(dict.fromkeys(noms), key=lambda t: -len(NT(t)))[:4]
-        # es busca el nom del tema sense el que va entre parèntesis («Last Bandit (Live Electric)» -> «Last Bandit»)
-        noms = [re.sub(r'\s*[\(\[][^\(\)\[\]]*[\)\]]', ' ', t).strip() or t for t in noms]
+        # es busca el nom del tema sense el que va entre parèntesis («Last Bandit (Live Electric)» -> «Last Bandit»),
+        # també si el parèntesi queda tallat pel nom de l'arxiu («Steel Will (w_ Michael Monroe & K»), i sense repetir
+        # el mateix tema en versions diferents («Venus in Furs (French Remix)», «... (Cantinero Mix)», 14/11/2026)
+        def busca(t):
+            s = re.sub(r'\s*[\(\[][^\(\)\[\]]*[\)\]]', ' ', str(t))
+            s = re.sub(r'\s*[\(\[][^\(\)\[\]]*$', ' ', s).replace('_', ' ')
+            return re.sub(r'\s+', ' ', s).strip() or t
+        noms = [busca(t) for t in (temes or []) if NT(t) and not generics.match(NT(t))]
+        noms = list({NT(t): t for t in sorted(noms, key=lambda t: len(NT(t)))}.values())
+        noms = sorted(noms, key=lambda t: -len(NT(t)))[:4]
         punts, mostra = {}, {}
         # amb el títol de la carpeta («Touch»), la cerca de cada tema es limita als discos que es diuen així: un tema
         # amb un nom corrent («Tell It Like It Is») surt a centenars de discos i el bo pot quedar fora dels resultats
         consultes = [{'track': t} for t in noms]
-        if NT(titol):
-            consultes = [{'track': t, 'release_title': titol} for t in noms] + consultes
+        titols = [x for x in dict.fromkeys(titol if isinstance(titol, (list, tuple)) else [titol]) if NT(x)]
+        for tt in reversed(titols):
+            consultes = [{'track': t, 'release_title': tt} for t in noms] + consultes
         # l'artista que porten davant els noms dels arxius («01-01 Tyla's Dogs d'Amour - Last Bandit»): els temes d'un
         # grup surten a molts discos seus (recopilatoris, directes) i el bo pot quedar fora dels 100 primers resultats
-        if N(artista):
-            consultes = [{'track': t, 'artist': artista} for t in noms] + consultes
+        for a in reversed([x for x in dict.fromkeys(artista if isinstance(artista, (list, tuple)) else [artista]) if N(x)]):
+            consultes = [{'track': t, 'artist': a} for t in noms] + consultes
         for q in consultes:
             r = self.api('/database/search', type='release', per_page=100, **q) or {}
             vistos = set()
