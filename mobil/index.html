@@ -148,6 +148,15 @@ button.link:hover{color:var(--accent);text-decoration:underline}
 .ihero img{width:100%;border-radius:4px}
 @media (max-width:520px){.ihero{grid-template-columns:1fr}.ihero img{max-width:200px}}
 .carrega{color:var(--muted)}
+ul.disc.dg{grid-template-columns:1fr}
+ul.disc.dg .vf{font-weight:400;margin-left:6px}
+ul.disc.dg .fl{display:inline-block;width:1em;color:var(--muted)}
+ul.disc.dg .tag.on{color:var(--accent);border-color:var(--accent)}
+.dgt{margin:6px 0 4px 1.2em}
+ol.dgl{list-style:none;margin:4px 0 0;padding:0;font-size:14px}
+ol.dgl li{padding:3px 0;border-bottom:1px dotted var(--line)}
+ol.dgl .n{display:inline-block;min-width:2.4em;color:var(--muted);font:12px var(--f-mono)}
+ol.dgl li.falta{color:var(--accent)}
 .scan{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px}
 fieldset.sups{border:1px solid var(--line);border-radius:var(--r);display:flex;gap:18px;flex-wrap:wrap;padding:10px 14px}
 fieldset.sups legend{font:500 11px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 4px}
@@ -1180,7 +1189,13 @@ $('#newBtn').addEventListener('click', () => openSheet(null, true));
 /* ---------- Fitxa d'artista o músic: es busca a internet en el moment i no es desa enlloc ---------- */
 const MB = 'https://musicbrainz.org/ws/2/';
 let mbUltim = 0;
+const MB_LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 async function mb(path){
+  // al PC, la consulta la fa el servidor de la Discoteca (amb la identificació que MusicBrainz demana i memòria d'una hora);
+  // si no respon, o al mòbil, es consulta directament
+  if(MB_LOCAL){
+    try{ const r = await fetch('/api/mb?p=' + encodeURIComponent(path)); if(r.ok) return r.json(); }catch{}
+  }
   const espera = 1100 - (Date.now() - mbUltim);           // MusicBrainz demana 1 consulta per segon
   if(espera > 0) await new Promise(r => setTimeout(r, espera));
   // MusicBrainz respon 503 si li arriben massa consultes des de casa (p. ex. mentre el PC completa dades):
@@ -1277,12 +1292,32 @@ async function obreInfo(nom, banda){
     const llista = [...grups.values()];
     const membresDe = llista.filter(x => !x.inv), membres = llista.filter(x => x.inv);
     // discos (àlbums d'estudi i en directe)
-    let rg = null;
-    try{ rg = await mb('release-group?limit=100&artist=' + a.id); }catch{}
-    const discosMB = ((rg || {})['release-groups'] || []).filter(x => ['Album', 'EP'].includes(x['primary-type']) && !(x['secondary-types'] || []).includes('Compilation'))
+    // discografia completa: tots els discos de l'artista (MusicBrainz en dona 100 per consulta)
+    let rg = null, totsRG = [];
+    try{
+      for(let off = 0; off < 400; off += 100){
+        const j = await mb('release-group?limit=100&offset=' + off + '&artist=' + a.id);
+        rg = j; totsRG.push(...(j['release-groups'] || []));
+        if(totsRG.length >= (j['release-group-count'] || 0) || !(j['release-groups'] || []).length) break;
+      }
+    }catch{}
+    const discosMB = totsRG.filter(x => ['Album', 'EP'].includes(x['primary-type']))
       .sort((x, y) => (x['first-release-date'] || '9').localeCompare(y['first-release-date'] || '9'));
-    const noms = new Set([neteja(det.name), ...llista.map(x => neteja(x.nom))]);
-    const tinc = new Map(discs.filter(d => noms.has(neteja(artName(d.artista)))).map(d => [neteja(d.titol), d]));
+    const noms = new Set([neteja(det.name), neteja(nom), ...llista.map(x => neteja(x.nom))]);
+    const meusDiscs = discs.filter(d => noms.has(neteja(artName(d.artista))));
+    const tinc = new Map();
+    for(const d of meusDiscs){ tinc.set(neteja(d.titol), d); tinc.set(clauDisc(d.titol), d); }
+    const elTinc = x => tinc.get(neteja(x.title)) || tinc.get(clauDisc(x.title));
+    const seccio = x => { const s = x['secondary-types'] || [];
+      return s.includes('Compilation') ? 'Recopilatoris' : s.includes('Live') ? 'En directe' : s.length ? 'Altres' : x['primary-type'] === 'EP' ? 'EP' : 'Àlbums'; };
+    const seccions = ['Àlbums', 'EP', 'En directe', 'Recopilatoris', 'Altres'].map(n => [n, discosMB.filter(x => seccio(x) === n)]).filter(x => x[1].length);
+    const filaDisc = x => {
+      const d = elTinc(x);
+      return `<li><button class="link dgb" type="button" data-dg="${esc(x.id)}" data-dg-meu="${d ? esc(d.id) : ''}"><span class="fl">▸</span> ${esc(x.title)}</button>
+        <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}</span>${d ? `<span class="tag on">El tens</span>` : ''}
+        ${d ? `<button class="link who2 vf" type="button" data-open-info="${esc(d.id)}" title="Obre la teva fitxa">fitxa →</button>` : ''}<div class="dgt" hidden></div></li>`;
+    };
+    const nTinc = discosMB.filter(elTinc).length;
     const fila = x => `<li><button class="link" type="button" data-info="${esc(x.nom)}">${esc(x.nom)}</button>${x.per ? ` <span class="who2">${esc(x.per)}</span>` : ''}${meus.has(neteja(x.nom)) ? '<span class="tag">A la col·lecció</span>' : ''}</li>`;
     cos().innerHTML = `
       <div class="ihero">${wiki?.foto ? `<img src="${esc(wiki.foto)}" alt="" referrerpolicy="no-referrer">` : ''}
@@ -1291,16 +1326,52 @@ async function obreInfo(nom, banda){
                : `<p class="who2">No hi ha article a la Wikipedia.</p><p class="srcs"><a href="https://musicbrainz.org/artist/${a.id}" target="_blank" rel="noopener">MusicBrainz</a></p>`}</div></div>
       ${membresDe.length ? `<h3 class="sec">Grups i projectes · ${membresDe.length}</h3><ul class="disc">${membresDe.map(fila).join('')}</ul>` : ''}
       ${membres.length ? `<h3 class="sec">Membres · ${membres.length}</h3><ul class="disc">${membres.map(fila).join('')}</ul>` : ''}
-      ${discosMB.length ? `<h3 class="sec">Discos · ${discosMB.length}</h3><ul class="disc">${discosMB.map(x => {
-          const d = tinc.get(neteja(x.title));
-          return `<li>${d ? `<button class="link" type="button" data-open-info="${esc(d.id)}">${esc(x.title)}</button><span class="tag">El tens</span>` : esc(x.title)} <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}${x['primary-type'] === 'EP' ? ' · EP' : ''}</span></li>`;
-        }).join('')}</ul>` : !rg ? `<p class="who2">No s'ha pogut carregar la llista de discos de MusicBrainz.</p><p>${reintenta}</p>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
+      ${discosMB.length ? `<h3 class="sec">Discografia · en tens ${nTinc} de ${discosMB.length}</h3><p class="who2">Toca un disc per veure'n els temes i quins et falten.</p>`
+          + seccions.map(([n, l]) => `<h3 class="sec">${n} · ${l.length}</h3><ul class="disc dg">${l.map(filaDisc).join('')}</ul>`).join('') : !rg ? `<p class="who2">No s'ha pogut carregar la llista de discos de MusicBrainz.</p><p>${reintenta}</p>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
   }catch(e){
     cos().innerHTML = `<p>No s'ha pogut consultar ara mateix (MusicBrainz no respon). Torna-ho a provar d'aquí a un moment, o fes servir els enllaços de dalt.</p><p>${reintenta}</p>`;
   }
 }
 function tancaInfo(){ $('#info').hidden = true; $('#scrim2').hidden = true; }
+// clau d'un títol per comparar: sense el que va entre parèntesis o claudàtors («(Remastered)», «[Deluxe]»)
+const clauDisc = s => neteja(String(s || '').replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')) || neteja(s);
+const temesMB = new Map();
+async function temesDisc(rgid){
+  if(temesMB.has(rgid)) return temesMB.get(rgid);
+  // l'edició oficial més antiga és la de l'original
+  const g = await mb('release-group/' + rgid + '?inc=releases');
+  const rels = (g.releases || []).slice().sort((x, y) => ((x.status !== 'Official') - (y.status !== 'Official')) || (!x.date - !y.date) || String(x.date || '').localeCompare(String(y.date || '')));
+  if(!rels.length) return [];
+  const r = await mb('release/' + rels[0].id + '?inc=recordings');
+  const media = r.media || [];
+  const out = media.flatMap((m, i) => (m.tracks || []).map(t => ({disc: media.length > 1 ? i + 1 : 0, n: t.number || t.position, titol: t.title})));
+  temesMB.set(rgid, out);
+  return out;
+}
+async function obreDiscMB(b){
+  const li = b.closest('li'), box = li.querySelector('.dgt'), fl = b.querySelector('.fl');
+  if(!box.hidden){ box.hidden = true; fl.textContent = '▸'; return; }
+  box.hidden = false; fl.textContent = '▾';
+  if(box.dataset.fet) return;
+  box.innerHTML = '<p class="carrega">Buscant els temes…</p>';
+  try{
+    const tm = await temesDisc(b.dataset.dg);
+    if(!tm.length){ box.innerHTML = '<p class="who2">MusicBrainz no té la llista de temes d\'aquest disc.</p>'; return; }
+    const meu = b.dataset.dgMeu ? discs.find(d => String(d.id) === b.dataset.dgMeu) : null;
+    const elsMeus = new Set(((meu && meu.temes) || []).flatMap(t => [neteja(t[1]), clauDisc(t[1])]));
+    const comparo = meu && elsMeus.size;
+    const falta = t => comparo && !elsMeus.has(neteja(t.titol)) && !elsMeus.has(clauDisc(t.titol));
+    const nf = tm.filter(falta).length;
+    box.innerHTML = (meu ? `<p class="who2">${!comparo ? 'La teva fitxa no té temes per comparar.' : nf ? `Et falten ${nf} de ${tm.length} temes.` : `Tens tots els temes (${tm.length}).`}</p>` : `<p class="who2">No el tens · ${tm.length} temes</p>`)
+      + `<ol class="dgl">${tm.map(t => `<li class="${falta(t) ? 'falta' : ''}"><span class="n">${t.disc ? 'Disc ' + t.disc + ' ' : ''}${esc(t.n)}</span> ${esc(t.titol)}${falta(t) ? '<span class="tag">Et falta</span>' : ''}</li>`).join('')}</ol>`;
+    box.dataset.fet = 1;
+  }catch(e){
+    box.innerHTML = '<p class="who2">No s\'han pogut carregar els temes ara mateix. Torna a tocar el disc d\'aquí a un moment.</p>';
+  }
+}
 document.addEventListener('click', e => {
+  const dg = e.target.closest('[data-dg]');
+  if(dg){ e.stopPropagation(); obreDiscMB(dg); return; }
   const t = e.target.closest('[data-info],[data-close-info],[data-open-info]'); if(!t) return;
   e.stopPropagation();
   if(t.dataset.info != null) obreInfo(t.dataset.info, t.dataset.banda || '');
