@@ -85,6 +85,11 @@ def id_artista(nom, artistes):
     for k, v in artistes.items():
         if N(v) == N(nom):
             return k
+    # el mateix grup escrit diferent («Million Dollar Reload» = «Million $ Reload»): es queda el nom que ja hi ha, que és
+    # el de la portada (norma 14/11/2026); no es crea un artista nou
+    for k, v in artistes.items():
+        if comu.mateix_artista(v, nom):
+            return k
     t = int(time.time() * 1000)
     while 'a' + str(t) in artistes:      # dos artistes nous en el mateix mil·lisegon
         t += 1
