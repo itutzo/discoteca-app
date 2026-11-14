@@ -307,6 +307,10 @@ def formata_arxius(d, arrel):
             nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
                       tria=lambda c: cans.append(c) or c)
         neta = dict(zip(cans, [majuscules(x) for x in comu.neteja_titols_temes(cans, art, tit, numeros=False)]))
+        # temes mal escrits que la fitxa ja ha corregit amb Discogs («Wister Time» -> «Wiser Time», 14/11/2026)
+        bons = {N(a): majuscules(nom_carpeta(b)) for a, b in d.get('temes_corregits') or [] if N(a) and nom_carpeta(b)}
+        if bons:
+            neta = {c: bons.get(N(v), v) for c, v in neta.items()}
         nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
                              tria=lambda c: neta.get(c, c)) for f in musica}
         # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3», Thelonious Monster) no és cap conflicte
@@ -362,6 +366,48 @@ def parteix_carpeta(nom, net=True):
     return art, any_, tit
 
 
+# versió de la manera d'identificar els discos: si es canvia, tots els pendents es tornen a buscar a la passada següent
+# (sense esperar els 30 dies entre intents). 14/11/2026: país al final, parèntesis al final, artista i títol girats.
+IDENT_VERSIO = '2026-11-14'
+
+# notes entre parèntesis o claudàtors amb comes al nom de l'artista d'una carpeta baixada: no són del nom del grup
+# («Grease Helmet (FIN,pre-Ajattara,Amorphis,Amoral) [glam,hard-rock]» és «Grease Helmet», 14/11/2026)
+_NOTES_ARTISTA = re.compile(r'\s*[\(\[][^\(\)\[\]]*,[^\(\)\[\]]*[\)\]]')
+
+
+def neteja_artistes_notes():
+    """Artistes amb notes entre parèntesis al nom, posats pel programa des del nom d'una carpeta del NAS: passen al
+    nom net (o s'ajunten amb el grup que ja hi ha amb aquest nom) i les seves carpetes es reanomenaran. Mai toca un
+    artista que tingui algun disc que no sigui una carpeta nova o amb l'artista escrit per l'Ignasi. Torna quants."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        artistes = llegeix('artistes.json', {})
+        fets = 0
+        for k, nom in list(artistes.items()):
+            net = re.sub(r'\s+', ' ', _NOTES_ARTISTA.sub(' ', str(nom))).strip(' -–—.')
+            if not N(net) or N(net) == N(nom):
+                continue
+            seus = [d for d in discs if str(d.get('artista')) == str(k)]
+            if not seus or any(not str(d.get('id', '')).startswith('nas') or 'artista' not in (d.get('auto') or [])
+                               and 'titol' not in (d.get('auto') or []) for d in seus):
+                continue
+            altre = next((j for j, v in artistes.items() if j != k and N(v) == N(net)), None)
+            if altre:
+                for d in seus:
+                    d['artista'] = altre
+            else:
+                artistes[k] = net
+            for d in seus:
+                if d.get('carpeta'):
+                    d['reanomena_nas'] = True
+            log(f"  Artista amb notes al nom: «{nom}» ara és «{net}» ({len(seus)} discos)")
+            fets += 1
+        if fets:
+            desa('artistes.json', artistes)
+            desa('discs.json', discs)
+    return fets
+
+
 def repara_pendents():
     """Discos nous del NAS encara pendents i sense cap font, amb l'artista o el títol tal com venien de la carpeta amb
     soroll («[1978] Rose Tattoo», «High Water I 320»): passen a l'artista, l'any i el títol nets i es tornen a buscar.
@@ -371,7 +417,8 @@ def repara_pendents():
         discs = llegeix('discs.json', [])
         artistes = llegeix('artistes.json', {})
         fetes = llegeix('migracions.json', {})
-        primer = not fetes.get('identificacio_robusta')
+        # cada cop que canvia la manera d'identificar (IDENT_VERSIO), tots els pendents es tornen a provar de seguida
+        primer = not fetes.get('identificacio_robusta') or fetes.get('ident_versio') != IDENT_VERSIO
         canvis = 0
         for d in discs:
             if d.get('estat') != 'pendent' or d.get('fonts') or not d.get('carpeta') \
@@ -403,7 +450,8 @@ def repara_pendents():
         if canvis:
             desa('discs.json', discs)
         if primer:
-            fetes['identificacio_robusta'] = AVUI
+            fetes['identificacio_robusta'] = fetes.get('identificacio_robusta') or AVUI
+            fetes['ident_versio'] = IDENT_VERSIO
             desa('migracions.json', fetes)
     if canvis:
         log(f'Pendents: {canvis} discos nous es tornen a buscar amb el nom de la carpeta net')
@@ -616,6 +664,11 @@ def identificat_per_temes(d, dg, nom_art, artistes, motiu='pels temes de la carp
         d.setdefault('artista_abans', nom_art)
         d['art_vell'] = d.get('artista')        # l'artista equivocat («1989», «Nova carpeta»): fora si es queda sense discos
         d['artista'] = id_artista(art, artistes)
+        # el «mateix grup» que ha trobat és el nom de la carpeta amb notes entre parèntesis: el bo és el de Discogs
+        vell_nom = artistes.get(str(d['artista']), '')
+        if str(d['artista']) == str(d['art_vell']) and N(_NOTES_ARTISTA.sub(' ', vell_nom)) == N(art) and N(vell_nom) != N(art):
+            artistes[str(d['artista'])] = art
+            desa('artistes.json', artistes)
     else:
         art = nom_art
     if tit and NT(tit) != NT(vell_t):
@@ -1136,14 +1189,28 @@ def variants_cerca(nom_art, titol, art_temes):
     t_net = comu.nom_net(titol)[0]
     vist = {(N(nom_art), NT(titol))}
     out = []
+
+    def afegeix(a, t):
+        k = (N(a), NT(t))
+        if not k[0] or not k[1] or re.match(r'^\d{4}$', k[0]) or k in vist:
+            return
+        vist.add(k)
+        out.append((a, t))
     for a in (a_net, art_temes, nom_art):
         for t in (t_net, titol):
-            k = (N(a), NT(t))
-            if not k[0] or not k[1] or re.match(r'^\d{4}$', k[0]) or k in vist:
-                continue
-            vist.add(k)
-            out.append((a, t))
-    return out[:4]
+            afegeix(a, t)
+    out = out[:4]           # les de sempre, en el mateix ordre (no fer passes enrere)
+    # 14/11/2026, sense excepcions per disc: el país enganxat al final («jetboy - Feel The Shake usa»), el que va
+    # entre parèntesis al final («(Live, 1990)») i l'artista i el títol girats («Acoustic Voodoo-MAD JUANA»: el disc
+    # «Acoustic Voodoo» de Mad Juana). Cada variant només s'accepta si els temes encaixen (`encaixa()`).
+    t_pais = comu.sense_pais(t_net)
+    t_par = comu.sense_parentesi(t_net)[0]
+    for a in dict.fromkeys(x for x in (a_net, art_temes, comu.sense_pais(a_net)) if x):
+        for t in (t_pais, t_par, comu.sense_pais(t_par)):
+            afegeix(a, t)
+    if N(a_net) != N(t_net) and not re.match(r'^\d{4}$', N(a_net)):
+        afegeix(comu.sense_pais(t_net), comu.sense_pais(a_net))
+    return out[:8]
 
 
 def treu_dades_dg(d, dg, auto, fonts_d):
@@ -1260,10 +1327,16 @@ def completa(d, artistes, estils_meus):
             d['art_dg'] = AVUI
             try:
                 t_net = comu.nom_net(titol)[0]
-                a = DG.artista_per_titol(t_net, temes_nets, sa[0] or str(d.get('any') or ''))
-                x = DG.cerca(a, t_net, d.get('any', ''), temes_nets) if a else None
-                if x and encaixa(x):
-                    dg, variant = x, (a, t_net)
+                # també sense el país ni el que va entre parèntesis al final («... (Live, 1990)», 14/11/2026)
+                t_par, any_par = comu.sense_parentesi(t_net)
+                for t_prova, any_prova in dict.fromkeys([(t_net, ''), (comu.sense_pais(t_net), ''), (t_par, any_par)]):
+                    if not NT(t_prova):
+                        continue
+                    a = DG.artista_per_titol(t_prova, temes_nets, sa[0] or str(d.get('any') or '') or any_prova)
+                    x = DG.cerca(a, t_prova, d.get('any', ''), temes_nets) if a else None
+                    if x and encaixa(x):
+                        dg, variant = x, (a, t_prova)
+                        break
             except Exception as e:
                 log(f'  Discogs (artista pel títol): error {e!r}')
     if dg:
@@ -1279,7 +1352,17 @@ def completa(d, artistes, estils_meus):
             and 'titol' in auto and not dg_provat(d, 'id_temes'):
         try:
             d['id_temes'] = AVUI
-            dg = DG.cerca_per_temes(temes_nets or [t for t in temes_crus if t], d.get('any', ''), comu.nom_net(titol)[0], art_temes)
+            # els artistes possibles: el que porten davant els arxius i, si la carpeta en porta, el de la carpeta i
+            # el títol (per si estan girats: «Acoustic Voodoo-MAD JUANA»), sense el país del final (14/11/2026)
+            a_c, t_c = comu.nom_net(nom_art, artista=True, the_davant=True)[0], comu.nom_net(titol)[0]
+            arts = [art_temes]
+            if N(a_c) and N(a_c) != N(t_c) and not re.match(r'^\d{4}$', N(a_c)):
+                arts += [comu.sense_pais(a_c), comu.sense_pais(t_c)]
+            titols = [comu.sense_parentesi(comu.sense_pais(t_c))[0]]
+            if len(arts) > 1:
+                titols.append(comu.sense_pais(a_c))
+            dg = DG.cerca_per_temes(temes_nets or [t for t in temes_crus if t], d.get('any', '') or comu.sense_parentesi(t_c)[1],
+                                    titols, [a for a in dict.fromkeys(arts) if N(a)])
         except Exception as e:
             log(f'  Discogs (per temes): error {e!r}')
         if dg:
@@ -1372,6 +1455,14 @@ def completa(d, artistes, estils_meus):
         d.pop('fmt_m', None)                    # els arxius es tornaran a anomenar amb el seu disc
     d['temes'] = temes
 
+    # 3a. Temes mal escrits: es corregeixen amb els de Discogs (norma del 14/11/2026)
+    if dg:
+        try:
+            if corregeix_temes(d, dg.get('temes')):
+                canvis.append('temes')
+            d['tcor_rev'] = AVUI
+        except Exception as e:
+            log(f'  Temes mal escrits: error {e!r}')
     # 3b. Cançons que falten a la carpeta respecte a Discogs (norma del 14/11/2026)
     if dg and d.get('carpeta'):
         marca_falten(d, dg.get('temes'))
@@ -2155,7 +2246,7 @@ def sincronitza_discogs():
                                 falten = 0
                 d['edicions'] = ed_col[str(d['id'])]
             else:
-                d.pop('edicions', None)
+                d['edicions'] = {}   # mirat: no és a la col·lecció (la fitxa ho distingeix de «encara per mirar»)
     desa('discs.json', discs)
     with open(os.path.join(comu.DADES, 'discogs_informe.txt'), 'w', encoding='utf-8') as f:
         f.write(f'Sincronització amb Discogs {datetime.datetime.now():%d/%m/%Y %H:%M}\n\n' + '\n'.join(sorted(informe)))
@@ -2437,6 +2528,66 @@ def discs_diferents(d1, d2, al_nas):
     return not temes_equivalents(d1.get('temes'), d2.get('temes'))
 
 
+def corregeix_temes(d, temes_dg):
+    """Norma de l'Ignasi (14/11/2026): els temes mal escrits es corregeixen sols amb els del disc trobat a Discogs
+    («Wister Time» -> «Wiser Time», «Rich Girlg» -> «Rich Girl»). És una excepció a «no sobreescriure», com els títols
+    dels discos. Només si el disc encaixa (el 60 % dels temes iguals), si la diferència és una errada d'escriptura del
+    títol mateix (no el que va entre parèntesis, ni números diferents: «Part 1»/«Part 2») i si un sol tema de Discogs
+    s'hi assembla. Es desa el canvi a `temes_corregits` i a dades/titols_corregits.txt; les estrelles, els compositors
+    i la resta del tema no es toquen, i els arxius del NAS es tornaran a anomenar (`formata_arxius`). Torna quants."""
+    temes = d.get('temes') or []
+    seus = [x.get('titol') for x in temes_dg or [] if NT(x.get('titol'))]
+    meus = [t for t in temes if len(t) > 1 and NT(t[1])]
+    if len(meus) < 3 or len(seus) < 3 or cancons_soltes('', d.get('titol', '')):
+        return 0
+    if comu.temes_coincidents([t[1] for t in meus], seus) < TEMES_ENCAIXA * len(meus):
+        return 0
+    exactes = {NT(t[1]) for t in meus}
+    xifres = lambda s: re.findall(r'\d+', NT(s))
+    firma_abans = firma_temes(temes)
+    fets = []
+    for t in meus:
+        a = NT(t[1])
+        if len(a) < 4 or any(NT(b) == a for b in seus):
+            continue
+        cands = []
+        for b in seus:
+            nb = NT(b)
+            if nb in exactes or comu.TT(b) == comu.TT(t[1]) or xifres(b) != xifres(t[1]):
+                continue        # ja és d'un altre tema, o només canvia el que va entre parèntesis
+            r = SequenceMatcher(None, comu.TT(t[1]), comu.TT(b)).ratio()
+            if r >= 0.85:
+                cands.append((r, b))
+        cands.sort(reverse=True)
+        if not cands or (len(cands) > 1 and cands[0][0] - cands[1][0] < 0.05):
+            continue
+        nou = cands[0][1]
+        # el que hi havia entre parèntesis al final es manté («... (Bonus Track)»)
+        cua = re.search(r'\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$', t[1])
+        if cua and not re.search(r'[\(\[]', nou):
+            nou = nou + cua.group(0)
+        fets.append([t[1], nou])
+        exactes.add(NT(nou))
+        t[1] = nou
+    if not fets:
+        return 0
+    d['temes_corregits'] = (d.get('temes_corregits') or []) + fets
+    if d.get('nas_t') == firma_abans:
+        d['nas_t'] = firma_temes(temes)
+    d.pop('fmt_m', None)        # els arxius es tornaran a anomenar amb el nom bo
+    log(f"  Temes mal escrits corregits a «{d.get('titol', '')}»: " + ', '.join(f'«{a}» -> «{b}»' for a, b in fets[:5]))
+    try:
+        with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
+            for a, b in fets:
+                f.write(f"{AVUI}\ttema\t{d.get('titol', '')}: {a}\t{b}\t{d.get('carpeta', '')}\n")
+    except OSError:
+        pass
+    return len(fets)
+
+
+TEMES_ENCAIXA = 0.6
+
+
 def marca_falten(d, temes_dg):
     """Norma de l'Ignasi (14/11/2026): si a la carpeta del NAS li falten cançons respecte a la llista del disc a Discogs
     («Mothership Connection» només tenia la pista 7), la fitxa ho avisa (camp `falten`: els títols que no hi són).
@@ -2461,7 +2612,8 @@ def revisa_falten(n=150):
     la fitxa ho avisa (`marca_falten()`). Fa servir la memòria de consultes de Discogs."""
     with comu.BLOC:
         discs = llegeix('discs.json', [])
-    cua = [d for d in discs if d.get('carpeta') and d.get('discogs_release') and not d.get('falt_rev')][:n]
+    # també els que encara no s'han revisat per si tenen temes mal escrits (camp tcor_rev, 14/11/2026)
+    cua = [d for d in discs if d.get('discogs_release') and (d.get('carpeta') and not d.get('falt_rev') or not d.get('tcor_rev'))][:n]
     if not cua:
         return 0
     resultat = {}
@@ -2472,14 +2624,29 @@ def revisa_falten(n=150):
             log(f'  Temes que falten: error {e!r}')
             break
         if rel:
-            x = {'temes': d.get('temes'), 'titol': d.get('titol'), 'carpeta': d.get('carpeta')}
-            resultat[d['id']] = (marca_falten(x, rel.get('temes')), x['falt_rev'])
+            x = {'temes': [list(t) for t in d.get('temes') or []], 'titol': d.get('titol'), 'carpeta': d.get('carpeta'),
+                 'nas_t': d.get('nas_t'), 'nas_t0': d.get('nas_t')}
+            corregits = corregeix_temes(x, rel.get('temes'))
+            falten = marca_falten(x, rel.get('temes')) if d.get('carpeta') else []
+            resultat[d['id']] = (falten, x.get('falt_rev'), x if corregits else None)
     with comu.BLOC:
         discs = llegeix('discs.json', [])
         n_falten = 0
         for d in discs:
             if d.get('id') in resultat:
-                falten, data = resultat[d['id']]
+                falten, data, x = resultat[d['id']]
+                d['tcor_rev'] = AVUI
+                if x and len(x['temes']) == len(d.get('temes') or []):
+                    # només el títol dels temes corregits; la resta (estrelles que hagis posat mentrestant) es queda
+                    for t, u in zip(d['temes'], x['temes']):
+                        if len(t) > 1 and len(u) > 1 and t[1] != u[1] and [t[1], u[1]] in x['temes_corregits']:
+                            t[1] = u[1]
+                    d['temes_corregits'] = (d.get('temes_corregits') or []) + x['temes_corregits']
+                    if d.get('nas_t') == x['nas_t0']:
+                        d['nas_t'] = x.get('nas_t')
+                    d.pop('fmt_m', None)
+                if not data:
+                    continue
                 d['falt_rev'] = data
                 if falten:
                     d['falten'] = falten[:30]
@@ -3110,6 +3277,10 @@ def main():
                 repara_pendents()
             except Exception as e:
                 log(f'Pendents: error netejant noms {e!r}')
+            try:
+                neteja_artistes_notes()
+            except Exception as e:
+                log(f'Artistes amb notes al nom: error {e!r}')
         if a.mode in ('nit', 'tot', 'pendents', 'disc'):
             fets = tanda('tot' if a.mode == 'nit' else a.mode, a.n, a.id)
             try:
