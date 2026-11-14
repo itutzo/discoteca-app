@@ -1757,8 +1757,13 @@ def recomana(d, nom_art, am, dg):
 CLAUS = ('any', 'genere', 'estil', 'clasamg', 'segell', 'bitrate', 'caratula', 'temes', 'interprets')
 
 
+# Camps que compten per a «complet del tot»: CLAUS sense la nota d'AllMusic (clasamg), que ja no es pot
+# omplir perquè AllMusic bloqueja l'accés (14/11/2026). La pàgina fa el mateix (faltaDades()).
+CLAUS_COMPLET = tuple(k for k in CLAUS if k != 'clasamg')
+
+
 def incomplet(d):
-    if any(not d.get(k) for k in CLAUS):
+    if any(not d.get(k) for k in CLAUS_COMPLET):
         return True
     return any(len(t) > 2 and not t[2] for t in d.get('temes', []))   # temes sense compositor
 

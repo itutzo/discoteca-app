@@ -4,7 +4,7 @@ Només escolta el mateix PC (127.0.0.1): cap altre aparell de la xarxa ni d'inte
 El mòbil i la tauleta fan servir la versió web (itutzo.github.io/discoteca), que llegeix del Dropbox.
 A més, només accepta peticions fetes des de la mateixa Discoteca: una altra pàgina web oberta
 al navegador no pot esborrar ni canviar res."""
-import json, os, sys, shutil, subprocess, threading, time, urllib.parse
+import json, os, re, sys, shutil, subprocess, threading, time, urllib.error, urllib.parse, urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +34,49 @@ def importar_caratules_inicials():
     log(f'Copiant {len(nous)} caràtules inicials des de {origen}')
     for f in nous:
         shutil.copy2(os.path.join(origen, f), os.path.join(comu.CARATULES, f))
+
+
+# ---------- MusicBrainz per a la fitxa d'artista ----------
+# La pàgina consulta MusicBrainz a través d'aquí: amb la identificació que MusicBrainz demana (User-Agent),
+# una consulta per segon com a màxim i memòria d'una hora (obrir i tornar a obrir la fitxa no torna a preguntar).
+MB_UA = {'User-Agent': 'Discoteca/1.0 ( https://github.com/itutzo/discoteca-app )', 'Accept': 'application/json'}
+MB_CAMI = re.compile(r'(artist|release-group|release)(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?')
+MB_BLOC = threading.Lock()
+MB_ULTIM = [0.0]
+MB_MEMORIA = {}
+
+
+def consulta_mb(cami):
+    """Retorna (codi, json) d'una consulta a l'API de MusicBrainz; `cami` és, p. ex., «artist/<id>?inc=url-rels»."""
+    base, _, q = cami.partition('?')
+    if not MB_CAMI.fullmatch(base):
+        return 400, None
+    url = 'https://musicbrainz.org/ws/2/' + base + '?' + (q + '&' if q else '') + 'fmt=json'
+    ara = time.time()
+    m = MB_MEMORIA.get(url)
+    if m and ara - m[0] < 3600:
+        return 200, m[1]
+    for i in range(3):
+        with MB_BLOC:
+            espera = 1.1 - (time.time() - MB_ULTIM[0])
+            if espera > 0:
+                time.sleep(espera)
+            MB_ULTIM[0] = time.time()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=MB_UA), timeout=20) as r:
+                j = json.loads(r.read().decode('utf-8'))
+            if len(MB_MEMORIA) > 500:
+                MB_MEMORIA.clear()
+            MB_MEMORIA[url] = (time.time(), j)
+            return 200, j
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 502, 503, 504) or i == 2:
+                return e.code, None
+        except Exception:
+            if i == 2:
+                return 504, None
+        time.sleep(2 if i == 0 else 5)
+    return 504, None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -119,6 +162,9 @@ class Handler(BaseHTTPRequestHandler):
                 log(f'Error incorporant canvis del mòbil: {e!r}')
             with BLOC:
                 return self._json({'artistes': llegeix('artistes.json', {}), 'discs': llegeix('discs.json', [])})
+        if p == '/api/mb':
+            codi, j = consulta_mb((q.get('p') or [''])[0])
+            return self._json(j if j is not None else {'error': codi}, 200 if j is not None else 502)
         if p == '/api/lastfm':
             return self._json(llegeix('lastfm.json', {}))
         if p == '/api/so':
