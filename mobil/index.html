@@ -149,6 +149,8 @@ button.link:hover{color:var(--accent);text-decoration:underline}
 @media (max-width:520px){.ihero{grid-template-columns:1fr}.ihero img{max-width:200px}}
 .carrega{color:var(--muted)}
 ul.disc.dg{grid-template-columns:1fr}
+details.dgno{margin-top:28px}
+details.dgno summary{cursor:pointer;font:500 12px/1 var(--f-mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-bottom:8px;border-bottom:1px solid var(--line)}
 ul.disc.dg .vf{font-weight:400;margin-left:6px}
 ul.disc.dg .fl{display:inline-block;width:1em;color:var(--muted)}
 ul.disc.dg .tag.on{color:var(--accent);border-color:var(--accent)}
@@ -666,7 +668,7 @@ function filtered(){
 function cardHTML(d){
   return `<button class="card" type="button" data-open="${esc(d.id)}">${sleeveHTML(d,false)}
     <span class="t">${esc(d.titol||'(sense títol)')}</span><span class="a">${esc(artName(d.artista))}</span>
-    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.classificacio?`<span>★ ${esc(decimal(d.classificacio))}</span>`:''}</span></button>`;
+    <span class="m">${d.any?`<span>${esc(d.any)}</span>`:''}${d.versio?.re?`<span title="${esc(versioText(d))}">Reedició${d.versio.any?' '+esc(d.versio.any):''}</span>`:''}${d.classificacio?`<span>★ ${esc(decimal(d.classificacio))}</span>`:''}</span></button>`;
 }
 function render(){
   const list = filtered();
@@ -687,6 +689,13 @@ function openSheet(id, edit=false){
 }
 function closeSheet(){ recsOpen = false; $('#sheet').hidden = true; $('#scrim').hidden = true; document.body.style.overflow=''; current=null; editing=false; }
 function fact(k, v){ return v ? `<dt>${k}</dt><dd>${esc(v)}</dd>` : ''; }
+// quina edició és la de la carpeta (camp `versio`, el posa completar.py): «Reedició 2009 · Rock Candy · UK · CD, Remastered · 2 temes extra»
+function versioText(d){
+  const v = d.versio; if(!v) return '';
+  const p = [v.re ? 'Reedició' + (v.any ? ' ' + v.any : '') : 'Original' + (v.any ? ' (' + v.any + ')' : ''), v.segell, v.pais, v.format,
+             v.extra ? v.extra + (v.extra === 1 ? ' tema extra' : ' temes extra') : '', v.font === 'carpeta' && v.nota ? 'segons el nom de la carpeta: «' + v.nota + '»' : ''];
+  return p.filter(Boolean).join(' · ');
+}
 function renderSheet(){
   const d = current, sh = $('#sheet');
   const t = trackList(d), p = peopleList(d);
@@ -710,10 +719,12 @@ function renderSheet(){
         <div class="score">
           <div><b>${d.classificacio?esc(decimal(d.classificacio)):'—'}</b><span>La meva nota</span></div>
           ${d.clasamg && d.clasamg!=='sin'?`<div><b>${esc(decimal(d.clasamg))}</b><span>AllMusic</span></div>`:''}
-          ${d.any?`<div><b>${esc(d.any)}</b><span>Any</span></div>`:''}
+          ${d.any?`<div><b>${esc(d.any)}</b><span>${d.versio?.re?'Any de l\'original':'Any'}</span></div>`:''}
+          ${d.versio?.re&&d.versio.any?`<div><b>${esc(d.versio.any)}</b><span>Reedició</span></div>`:''}
         </div>
         <dl class="facts">
           ${fact('Suport', supList(d).map(s=>(SUPS.find(x=>x[0]===s)||[s,s.toUpperCase()])[1]).join(' · '))}${fact('Bitrate', d.bitrate && (/^\d+$/.test(d.bitrate)? d.bitrate+' kbps' : d.bitrate))}
+          ${fact('La teva edició', versioText(d))}
           ${fact('Segell', d.segell)}${fact('Núm. de catàleg', d.catno)}${fact('Codi de barres', d.barcode)}${fact('Edició', d.edicio)}
           ${fact('Gènere', d.genere)}${fact('Estil', d.estil)}${fact('Qualitat', d.qualitat)}
           ${fact('Usuari', d.usuari)}
@@ -1310,28 +1321,38 @@ async function obreInfo(nom, banda){
     const membresDe = llista.filter(x => !x.inv), membres = llista.filter(x => x.inv);
     // discos (àlbums d'estudi i en directe)
     // discografia completa: tots els discos de l'artista (MusicBrainz en dona 100 per consulta)
-    let rg = null, totsRG = [];
-    try{
+    // «website-default» = només els discos amb alguna edició oficial (MusicBrainz deixa fora els que només tenen
+    // edicions pirata, promocionals o «pseudo-release»); «all» = tots. La diferència són els no oficials.
+    const baixa = async estat => { const out = [];
       for(let off = 0; off < 400; off += 100){
-        const j = await mb('release-group?limit=100&offset=' + off + '&artist=' + a.id);
-        rg = j; totsRG.push(...(j['release-groups'] || []));
-        if(totsRG.length >= (j['release-group-count'] || 0) || !(j['release-groups'] || []).length) break;
+        const j = await mb('release-group?limit=100&type=album|ep&release-group-status=' + estat + '&offset=' + off + '&artist=' + a.id);
+        out.push(...(j['release-groups'] || []));
+        if(out.length >= (j['release-group-count'] || 0) || !(j['release-groups'] || []).length) break;
       }
-    }catch{}
-    const discosMB = totsRG.filter(x => ['Album', 'EP'].includes(x['primary-type']))
-      .sort((x, y) => (x['first-release-date'] || '9').localeCompare(y['first-release-date'] || '9'));
+      return out; };
+    let rg = null, oficials = null, totsRG = [];
+    try{ oficials = await baixa('website-default'); rg = true; }catch{}
+    try{ totsRG = await baixa('all'); rg = true; }catch{}
+    if(!oficials) oficials = totsRG;
+    const perData = (x, y) => (x['first-release-date'] || '9').localeCompare(y['first-release-date'] || '9');
+    const idsOf = new Set(oficials.map(x => x.id));
+    const discosMB = oficials.filter(x => ['Album', 'EP'].includes(x['primary-type'])).sort(perData);
+    const noOficials = totsRG.filter(x => !idsOf.has(x.id) && ['Album', 'EP'].includes(x['primary-type'])).sort(perData);
     const noms = new Set([neteja(det.name), neteja(nom), ...llista.map(x => neteja(x.nom))]);
     const meusDiscs = discs.filter(d => noms.has(neteja(artName(d.artista))));
     const tinc = new Map();
     for(const d of meusDiscs){ tinc.set(neteja(d.titol), d); tinc.set(clauDisc(d.titol), d); }
     const elTinc = x => tinc.get(neteja(x.title)) || tinc.get(clauDisc(x.title));
+    // seccions segons els tipus de MusicBrainz: principal (Album/EP) i secundaris (Compilation, Live, Demo…)
     const seccio = x => { const s = x['secondary-types'] || [];
-      return s.includes('Compilation') ? 'Recopilatoris' : s.includes('Live') ? 'En directe' : s.length ? 'Altres' : x['primary-type'] === 'EP' ? 'EP' : 'Àlbums'; };
-    const seccions = ['Àlbums', 'EP', 'En directe', 'Recopilatoris', 'Altres'].map(n => [n, discosMB.filter(x => seccio(x) === n)]).filter(x => x[1].length);
+      return s.includes('Compilation') ? 'Recopilatoris oficials' : s.includes('Live') ? 'En directe' : s.includes('Demo') ? 'Demos'
+        : s.length ? 'Bandes sonores, remescles i altres' : x['primary-type'] === 'EP' ? 'EP' : "Discos d'estudi"; };
+    const seccions = ["Discos d'estudi", 'EP', 'Recopilatoris oficials', 'En directe', 'Demos', 'Bandes sonores, remescles i altres']
+      .map(n => [n, discosMB.filter(x => seccio(x) === n)]).filter(x => x[1].length);
     const filaDisc = x => {
       const d = elTinc(x);
       return `<li><button class="link dgb" type="button" data-dg="${esc(x.id)}" data-dg-meu="${d ? esc(d.id) : ''}"><span class="fl">▸</span> ${esc(x.title)}</button>
-        <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}</span>${d ? `<span class="tag on">El tens</span>` : ''}
+        <span class="who2">${esc((x['first-release-date'] || '').slice(0, 4))}</span>${d ? `<span class="tag on">El tens</span>` : ''}${d?.versio?.re ? `<span class="who2" title="${esc(versioText(d))}"> · la teva: reedició${d.versio.any ? ' ' + esc(d.versio.any) : ''}</span>` : ''}
         ${d ? `<button class="link who2 vf" type="button" data-open-info="${esc(d.id)}" title="Obre la teva fitxa">fitxa →</button>` : ''}<div class="dgt" hidden></div></li>`;
     };
     const nTinc = discosMB.filter(elTinc).length;
@@ -1344,7 +1365,8 @@ async function obreInfo(nom, banda){
       ${membresDe.length ? `<h3 class="sec">Grups i projectes · ${membresDe.length}</h3><ul class="disc">${membresDe.map(fila).join('')}</ul>` : ''}
       ${membres.length ? `<h3 class="sec">Membres · ${membres.length}</h3><ul class="disc">${membres.map(fila).join('')}</ul>` : ''}
       ${discosMB.length ? `<h3 class="sec">Discografia · en tens ${nTinc} de ${discosMB.length}</h3><p class="who2">Toca un disc per veure'n els temes i quins et falten.</p>`
-          + seccions.map(([n, l]) => `<h3 class="sec">${n} · ${l.length}</h3><ul class="disc dg">${l.map(filaDisc).join('')}</ul>`).join('') : !rg ? `<p class="who2">No s'ha pogut carregar la llista de discos de MusicBrainz.</p><p>${reintenta}</p>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
+          + seccions.map(([n, l]) => `<h3 class="sec">${n} · ${l.length}</h3><ul class="disc dg">${l.map(filaDisc).join('')}</ul>`).join('')
+          + (noOficials.length ? `<details class="dgno"><summary class="sec">No oficials (pirates i promocionals) · ${noOficials.length}</summary><ul class="disc dg">${noOficials.map(filaDisc).join('')}</ul></details>` : '') : !rg ? `<p class="who2">No s'ha pogut carregar la llista de discos de MusicBrainz.</p><p>${reintenta}</p>` : '<p class="who2">MusicBrainz no té discos propis d\'aquest nom (potser només col·labora amb altres grups).</p>'}`;
   }catch(e){
     cos().innerHTML = `<p>No s'ha pogut consultar ara mateix (MusicBrainz no respon). Torna-ho a provar d'aquí a un moment, o fes servir els enllaços de dalt.</p><p>${reintenta}</p>`;
   }
