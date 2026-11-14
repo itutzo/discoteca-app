@@ -104,6 +104,17 @@ CASOS = [
     ('2010 - Love Is In The Missile', '2010 - Love Is In The Missile', 'Atom Smash', 'Love Is In The Missile'),
     ('In Vino Verilivicus MMXIX (Live) (2020)', 'In Vino Verilivicus MMXIX (Live) (2020)', "Tyla's Dogs D'Amour", 'In Vino Verilivicus'),
     ('Mothership Connection [1975]', 'Mothership Connection [1975]', 'Parliament', 'Mothership Connection'),
+    # resolts el 14/11/2026 (carpetes noves del dia)
+    ('2019 - One Man Gang', 'Michael Monroe - 2019 - One Man Gang', 'Michael Monroe', 'One Man Gang'),
+    ('Bright Side of Dim', 'Mothership, The - 2014 - Bright Side Of Dim', 'The Mothership', 'Bright Side Of Dim'),
+    ('Skin Of My teeth-MAD JUANA', 'Mad Juana - 1997 - Skin Of My Teeth', 'Mad Juana', 'Skin Of My Teeth'),
+    ('Acoustic Voodoo-MAD JUANA', 'Acoustic Voodoo-MAD JUANA', 'Mad Juana', 'Acoustic Voodoo'),
+    ('jetboy-2023 - Crate Diggin usa', 'jetboy-2023 - Crate Diggin usa', 'Jetboy', "Crate Diggin'"),
+    ('jetboy-Feel The Shake usa', 'jetboy-Feel The Shake usa', 'Jetboy', 'Feel The Shake'),
+    ('You, We See You Crawling (Live, 1990)', 'You, We See You Crawling (Live, 1990)', 'The Fartz', 'You, We See You Crawling'),
+    # l'artista amb notes entre parèntesis ha de quedar net (14/11/2026)
+    ('Grease Helmet (FIN,pre-Ajattara,Amorphis,Amoral) [glam,hard-rock] - 2012 - Grease Helmet',
+     'Grease Helmet (FIN,pre-Ajattara,Amorphis,Amoral) [glam,hard-rock] - 2012 - Grease Helmet', 'Grease Helmet', 'Grease Helmet'),
 ]
 
 

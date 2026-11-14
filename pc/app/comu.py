@@ -368,6 +368,8 @@ def nom_net(s, artista=False, the_davant=False):
             break
         t = t[:m.start()].strip(' -–—.')
     if artista:
+        # notes amb comes entre parèntesis («Grease Helmet (FIN,pre-Ajattara,Amorphis) [glam,hard-rock]»), 14/11/2026
+        t = re.sub(r'\s+', ' ', re.sub(r'\s*[\(\[][^\(\)\[\]]*,[^\(\)\[\]]*[\)\]]', ' ', t)).strip(' -–—.') or t
         m = re.match(r'^((?:19|20)\d{2})\s+(?=\D)', t) or re.search(r'\s+((?:19|20)\d{2})$', t)
         if m and len(t) - len(m.group(0)) >= 2:
             any_ = any_ or m.group(1)
@@ -377,6 +379,36 @@ def nom_net(s, artista=False, the_davant=False):
             t = 'The ' + m.group(1).strip()
     t = re.sub(r'\s+', ' ', t).strip(' -–—.')
     return (t or orig), any_
+
+
+# països o regions que algunes baixades enganxen al final del nom («Feel The Shake usa», «Crate Diggin USA»,
+# «... (Japan)»): no formen part del títol. Només per buscar (14/11/2026), mai per canviar el que es mostra.
+_PAIS_FINAL = re.compile(r'(?:\s+[-–—]?\s*|\s*[\(\[]\s*)(?:usa|us|uk|eu|euro|europe|jap|japan|jpn|jp|ger|germany|'
+                         r'fra|france|ita|italy|spain|esp|can|canada|aus|australia|import|promo)\s*[\)\]]?\s*$', re.I)
+
+
+def sense_pais(s):
+    """«Feel The Shake usa» -> «Feel The Shake»; «Born In The USA» es queda igual si no hi queden almenys 2 paraules."""
+    s = str(s or '').strip()
+    m = _PAIS_FINAL.search(s)
+    if m and m.start() > 0:
+        resta = s[:m.start()].strip(' -–—.,')
+        if len(re.findall(r'\w+', resta)) >= 2 and not re.search(r'\b(in|the|of)\s*$', resta, re.I):
+            return resta
+    return s
+
+
+def sense_parentesi(s):
+    """«You, We See You Crawling (Live, 1990)» -> («You, We See You Crawling», «1990»): treu el que va entre
+    parèntesis o claudàtors al final (i en torna l'any, si n'hi ha). Només per buscar."""
+    s, any_ = str(s or '').strip(), ''
+    while True:
+        m = re.search(r'\s*[\(\[]([^\(\)\[\]]*)[\)\]]\s*$', s)
+        if not m or m.start() == 0:
+            return s, any_
+        a = re.search(r'\b((?:19|20)\d{2})\b', m.group(1))
+        any_ = any_ or (a.group(1) if a else '')
+        s = s[:m.start()].strip(' -–—.,')
 
 
 _NUM_INICI = re.compile(r'^[\(\[]?\d{1,3}(?:[-.]\d{1,3})?[\)\]]?(?:\s*[-–—.]\s*|\s+)(?=\S)')
@@ -488,6 +520,9 @@ def TT(s):
     """Clau d'un tema per comparar: com NT() però sense res del que va entre parèntesis o claudàtors
     («Killing Time (Original Demo Version)» = «Killing Time», «Last Bandit (Live Electric)» = «Last Bandit»)."""
     sense = re.sub(r'[\(\[][^\(\)\[\]]*[\)\]]', ' ', str(s or ''))
+    # la data o la durada que algunes edicions posen al costat del tema («Music Critics - 1/24/81», «Dead Solger 11/15/82»,
+    # «Gone 4:31»): no és del títol (14/11/2026, The Fartz)
+    sense = re.sub(r'(?:\s*[-–—]?\s*(?:\d{1,2}[/.]\d{1,2}[/.]\d{2,4}|\d{1,2}:\d{2}))+\s*$', '', sense)
     return NT(sense) or NT(s)
 
 
