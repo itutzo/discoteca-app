@@ -518,7 +518,7 @@ class Discogs:
         noms = [busca(t) for t in (temes or []) if NT(t) and not generics.match(NT(t))]
         noms = list({NT(t): t for t in sorted(noms, key=lambda t: len(NT(t)))}.values())
         noms = sorted(noms, key=lambda t: -len(NT(t)))[:4]
-        punts, mostra = {}, {}
+        punts, mostra, edicions = {}, {}, {}
         # amb el títol de la carpeta («Touch»), la cerca de cada tema es limita als discos que es diuen així: un tema
         # amb un nom corrent («Tell It Like It Is») surt a centenars de discos i el bo pot quedar fora dels resultats
         consultes = [{'track': t} for t in noms]
@@ -534,6 +534,8 @@ class Discogs:
             vistos = set()
             for x in (r.get('results') or []):
                 k = ('m', x['master_id']) if x.get('master_id') else ('r', x.get('id'))
+                if x.get('id'):
+                    edicions.setdefault(k, []).append(x['id'])     # les edicions d'aquest disc que han sortit
                 if k in vistos:
                     continue
                 vistos.add(k)
@@ -555,7 +557,21 @@ class Discogs:
                 continue
             seus = [x['titol'] for x in rel['temes'] if NT(x['titol'])]
             iguals = comu.temes_coincidents([t for t in (temes or []) if NT(t)], seus)
-            if iguals >= 3 and iguals >= TEMES_IGUALS * len(meus) and iguals >= TEMES_IGUALS * len(seus):
+            encaixa = lambda i, s: i >= 3 and i >= TEMES_IGUALS * len(meus) and i >= TEMES_IGUALS * len(s)
+            if k[0] == 'm' and not encaixa(iguals, seus):
+                # l'edició principal pot tenir els temes escrits d'una altra manera (amb la data al costat, The Fartz
+                # 14/11/2026): es miren les altres edicions del mateix disc que han sortit a la cerca (com a molt 2)
+                for rid in [r for r in dict.fromkeys(edicions.get(k, [])) if r != rel['id']][:2]:
+                    r2 = self.release(rid)
+                    if not r2:
+                        continue
+                    s2 = [x['titol'] for x in r2['temes'] if NT(x['titol'])]
+                    i2 = comu.temes_coincidents([t for t in (temes or []) if NT(t)], s2)
+                    if encaixa(i2, s2):
+                        r2['master'] = rel.get('master')
+                        rel, seus, iguals = r2, s2, i2
+                        break
+            if encaixa(iguals, seus):
                 anys = {str((rel.get('master') or {}).get('year') or '')[:4], str(rel.get('any') or '')[:4]}
                 # el que s'assembla més en conjunt: un recopilatori amb els mateixos temes i molts més queda per sota
                 bons.append(((round(iguals / max(len(meus), len(seus)), 3), any_ in anys), rel))
