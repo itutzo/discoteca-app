@@ -162,7 +162,7 @@ def reanomena_carpeta(d, titol_vell=None, artistes=None):
     else:
         vell = titol_vell or d.get('titol_abans') or ''
     nou_t = majuscules(nom_carpeta(d['titol']))
-    nou = f'{art_nou} - {m.group(2)} - {nou_t}'
+    nou = f'{comu.art_carpeta(art_nou)} - {m.group(2)} - {nou_t}'
     if nou != c:
         if not a_ma and N(m.group(3)) != N(vell):
             d.pop('carpeta_nova', None)
@@ -205,7 +205,7 @@ def reanomena_arxius(ruta, vell, nou_t, art_vell=None, art_nou=None):
             art = m.group(1).strip()
             if art_nou and art_vell and N(art) == N(art_vell):
                 art = art_nou
-            nou = f'{art} - {nou_t} - {m.group(3).strip()}{ext}'
+            nou = f'{comu.art_arxius(art)} - {nou_t} - {m.group(3).strip()}{ext}'
             if nou == f or (nou.lower() != f.lower() and os.path.exists(os.path.join(root, nou))):
                 continue
             try:
@@ -239,7 +239,7 @@ FORMAT_CD = re.compile(r'^(.+?)\s+[-–—]\s+(.+)\s+[-–—]\s+(?:CD|Disc|Disc
 MARCA_CD = re.compile(r'(?:^|(?<=[\s\-_(\[]))(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b\s*[)\]]?\s*[-–—.]?\s*', re.I)
 
 
-def nom_arxiu(art, tit, base, cd_carpeta=None, discs=None):
+def nom_arxiu(art, tit, base, cd_carpeta=None, discs=None, tria=None):
     """El nom que ha de dur un arxiu («01 Evangeline» -> «Die Spitz - The Revenge Of Evangeline - 01 - Evangeline»;
     en un disc doble, «CD2 - 03 Cançó» o «2-03 Cançó» -> «Artista - Títol - Disc 2 - 03 - Cançó»).
     cd_carpeta és el número de CD si l'arxiu és dins d'una subcarpeta «CD2» o «Disc 2», i discs {títol: CD} el que
@@ -267,6 +267,8 @@ def nom_arxiu(art, tit, base, cd_carpeta=None, discs=None):
         if not num or re.match(r'^\d{1,3}\s', can):
             return None     # no és clar quin és el número de pista
     can = majuscules(re.sub(r'\s+', ' ', can).strip(' -–—'))
+    if tria:
+        can = tria(can)         # el títol net del tema (sense el nom del grup davant), decidit per a tota la carpeta
     if not can:
         return None
     if not cd and discs:
@@ -285,7 +287,7 @@ def formata_arxius(d, arrel):
     ruta = os.path.join(arrel, c or '')
     if not m or not os.path.isdir(ruta):
         return 0
-    art, tit = m.group(1).strip(), m.group(3).strip()
+    art, tit = comu.art_arxius(m.group(1).strip()), m.group(3).strip()     # arxius: «The Fumes - ...» (14/11/2026)
     discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
              if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
     canviats = errors = 0
@@ -293,7 +295,15 @@ def formata_arxius(d, arrel):
         sub = os.path.relpath(root, ruta)
         mc = re.search(r'(?:CD|Disc|Disco|Disk)\s*(\d{1,2})\b', sub, re.I) if sub != '.' else None
         musica = [f for f in files if os.path.splitext(f)[1].lower() in EXT]
-        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs) for f in musica}
+        # primer els títols de tots els temes de la carpeta, per treure el soroll que es repeteix a la majoria
+        # («Dozer - Call It Conspiracy - 02 - Dozer - Rising» -> «... - 02 - Rising», 13/11/2026)
+        cans = []
+        for f in musica:
+            nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
+                      tria=lambda c: cans.append(c) or c)
+        neta = dict(zip(cans, [majuscules(x) for x in comu.neteja_titols_temes(cans, art, tit, numeros=False)]))
+        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
+                             tria=lambda c: neta.get(c, c)) for f in musica}
         # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3», Thelonious Monster) no és cap conflicte
         claus = [(x[0], os.path.splitext(f)[1].lower()) for f, x in nous.items() if x]
         # dos arxius del mateix format amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res
@@ -435,7 +445,7 @@ def posa_any_carpeta(d, arrel):
         tit = comu.nom_net(tit)[0]
     if d.get('titol') and d.get('titol_abans') and NT(comu.nom_net(d['titol_abans'])[0]) == NT(tit):
         tit = d['titol']
-    art, tit = nom_carpeta(art), majuscules(nom_carpeta(tit))
+    art, tit = comu.art_carpeta(nom_carpeta(art)), majuscules(nom_carpeta(tit))
     nou = f'{art} - {any_} - {tit}'
     if not art or not tit or re.match(r'^\d{4}$', art) or not os.path.isdir(os.path.join(arrel, c)):
         return False
@@ -635,7 +645,7 @@ def posa_nom_identificat(d, arrel, artistes, motiu='reconeguda pels temes'):
     se'n formaten els arxius). Si encara no té l'any, s'espera. Torna True si l'ha reanomenada."""
     c = d.get('carpeta') or ''
     any_ = str(d.get('any') or '').strip()
-    art = nom_carpeta(artistes.get(str(d.get('artista')), ''))
+    art = comu.art_carpeta(nom_carpeta(artistes.get(str(d.get('artista')), '')))
     tit = majuscules(nom_carpeta(d.get('titol') or ''))
     if not art or not tit or not re.match(r'^\d{4}$', any_) or not os.path.isdir(os.path.join(arrel, c)):
         return False
@@ -687,7 +697,7 @@ def posa_artista_carpeta(d, arrel, artistes):
     c = d.get('carpeta') or ''
     sa = sense_artista(c)
     any_ = str(d.get('any') or '').strip()
-    art = nom_carpeta(artistes.get(str(d.get('artista')), ''))
+    art = comu.art_carpeta(nom_carpeta(artistes.get(str(d.get('artista')), '')))
     if not sa or not d.get('art_id3') or not art or not re.match(r'^\d{4}$', any_):
         return False
     nou = f"{art} - {any_} - {majuscules(nom_carpeta(sa[1] if sa[0] else d.get('titol') or sa[1]))}"
@@ -720,7 +730,7 @@ def copies_arxius(d, arrel):
     ruta = os.path.join(arrel, c or '')
     if not m or not os.path.isdir(ruta):
         return []
-    art, tit = m.group(1).strip(), m.group(3).strip()
+    art, tit = comu.art_arxius(m.group(1).strip()), m.group(3).strip()     # arxius: «The Fumes - ...» (14/11/2026)
     discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
              if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
     out = []
@@ -825,7 +835,7 @@ def formats_repetits(d, arrel):
     ruta = os.path.join(arrel, c or '')
     if not m or not os.path.isdir(ruta):
         return None
-    art, tit = m.group(1).strip(), m.group(3).strip()
+    art, tit = comu.art_arxius(m.group(1).strip()), m.group(3).strip()     # arxius: «The Fumes - ...» (14/11/2026)
     discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
              if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
     parells = []
@@ -962,6 +972,42 @@ def formata_tots():
                 artistes.pop(k, None)
         if vells:
             desa('artistes.json', artistes)
+        fetes = llegeix('migracions.json', {})
+        for d in discs:
+            c = d.get('carpeta')
+            m = CARPETA.match(c or '')
+            if c not in mtimes or not m:
+                continue
+            if not fetes.get('the_arxius') and re.search(r',\s*the$', m.group(1).strip(), re.I):
+                d.pop('fmt_m', None)        # norma del 14/11/2026: els arxius passen a «The X - ...»
+            nou_a = comu.art_carpeta(m.group(1).strip())
+            if nou_a != m.group(1).strip():
+                nou = f'{nou_a} - {m.group(2)} - {m.group(3).strip()}'
+                if os.path.exists(os.path.join(arrel, nou)) and nou.lower() != c.lower():
+                    log(f'  NAS: no reanomeno «{c}»: ja hi ha una carpeta «{nou}»')
+                    continue
+                try:
+                    os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+                except OSError as e:
+                    log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+                    continue
+                d['carpeta'] = nou
+                d.pop('fmt_m', None)
+                mtimes[nou] = mtimes.pop(c)
+                canvi += 1
+                log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (grup amb «The»: «{nou_a}»)')
+        if not fetes.get('the_arxius'):
+            fetes['the_arxius'] = AVUI
+            desa('migracions.json', fetes)
+            canvi += 1
+        for d in discs:
+            c = d.get('carpeta')
+            if c in mtimes:
+                try:
+                    if neteja_temes_fitxa(d, artistes.get(str(d.get('artista')), ''), os.path.join(arrel, c)):
+                        canvi += 1
+                except Exception as e:
+                    log(f'  NAS: error netejant els temes de «{c}» {e!r}')
         for d in discs:
             c = d.get('carpeta')
             # fmt_v 2: també els discos dobles («Disc 2»); les carpetes ja repassades es tornen a mirar un cop
@@ -1315,6 +1361,10 @@ def completa(d, artistes, estils_meus):
             d['nas_t'] = firma_temes(temes)     # l'ordre nou no vol dir que hagis canviat els temes
         d.pop('fmt_m', None)                    # els arxius es tornaran a anomenar amb el seu disc
     d['temes'] = temes
+
+    # 3b. Cançons que falten a la carpeta respecte a Discogs (norma del 14/11/2026)
+    if dg and d.get('carpeta'):
+        marca_falten(d, dg.get('temes'))
 
     # 4. Intèrprets
     if not d.get('interprets'):
@@ -2305,6 +2355,91 @@ def discs_diferents(d1, d2, al_nas):
     return not temes_equivalents(d1.get('temes'), d2.get('temes'))
 
 
+def marca_falten(d, temes_dg):
+    """Norma de l'Ignasi (14/11/2026): si a la carpeta del NAS li falten cançons respecte a la llista del disc a Discogs
+    («Mothership Connection» només tenia la pista 7), la fitxa ho avisa (camp `falten`: els títols que no hi són).
+    Només si la carpeta té menys temes que el disc de Discogs; si té els mateixos o més, no s'avisa. Torna la llista."""
+    d['falt_rev'] = AVUI
+    seus = [t.get('titol') for t in temes_dg or [] if NT(t.get('titol'))]
+    meus = comu.neteja_titols_temes([t[1] for t in d.get('temes') or [] if len(t) > 1 and t[1]],
+                                    '', d.get('titol', '')) if d.get('carpeta') else []
+    falten = [t for t in seus if not any(comu.tema_igual(t, u) for u in meus)] if meus and len(meus) < len(seus) else []
+    if falten:
+        if d.get('falten') != falten[:30]:
+            log(f"  A la carpeta li falten {len(falten)} temes respecte a Discogs: {', '.join(falten[:5])}"
+                + ('…' if len(falten) > 5 else ''))
+        d['falten'] = falten[:30]
+    else:
+        d.pop('falten', None)
+    return falten
+
+
+def revisa_falten(n=150):
+    """Cada nit, una tanda de discos amb carpeta i disc de Discogs que encara no s'han comparat: si els falten cançons,
+    la fitxa ho avisa (`marca_falten()`). Fa servir la memòria de consultes de Discogs."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+    cua = [d for d in discs if d.get('carpeta') and d.get('discogs_release') and not d.get('falt_rev')][:n]
+    if not cua:
+        return 0
+    resultat = {}
+    for d in cua:
+        try:
+            rel = DG.release(d['discogs_release'])
+        except Exception as e:
+            log(f'  Temes que falten: error {e!r}')
+            break
+        if rel:
+            x = {'temes': d.get('temes'), 'titol': d.get('titol'), 'carpeta': d.get('carpeta')}
+            resultat[d['id']] = (marca_falten(x, rel.get('temes')), x['falt_rev'])
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        n_falten = 0
+        for d in discs:
+            if d.get('id') in resultat:
+                falten, data = resultat[d['id']]
+                d['falt_rev'] = data
+                if falten:
+                    d['falten'] = falten[:30]
+                    n_falten += 1
+                else:
+                    d.pop('falten', None)
+        desa('discs.json', discs)
+    log(f'Temes que falten: {len(resultat)} discos comparats amb Discogs, {n_falten} amb cançons que falten a la carpeta')
+    return len(resultat)
+
+
+def neteja_temes_fitxa(d, nom_art, ruta=None):
+    """Temes de la fitxa trets dels noms dels arxius amb el nom del grup davant («Dozer - Rising»): passen al títol net
+    (`comu.neteja_titols_temes()`) i la carpeta es torna a formatar perquè els arxius es diguin igual. Només si els temes
+    els va posar el programa i no els has canviat (la firma `nas_t` coincideix, o són els mateixos noms que els arxius
+    de la carpeta). Les carpetes «Varios» de cançons soltes no es toquen. Torna True si ha canviat res."""
+    temes = d.get('temes') or []
+    if 'temes' not in (d.get('auto') or []) or len(temes) < 2 or cancons_soltes(nom_art, d.get('titol', '')):
+        return False
+    titols = [t[1] if len(t) > 1 else '' for t in temes]
+    nets = comu.neteja_titols_temes(titols, nom_art, d.get('titol', ''))
+    if nets == titols:
+        return False
+    meus = d.get('nas_t') != firma_temes(temes)
+    if meus and ruta:
+        try:
+            meus = [N(t[1]) for t in temes_de_noms(arxius_de(ruta))] != [N(t) for t in titols]
+        except OSError:
+            return False
+    if meus:
+        return False        # l'Ignasi els ha corregit a mà: no es toquen
+    abans = firma_temes(temes)
+    for t, x in zip(temes, nets):
+        if len(t) > 1:
+            t[1] = x
+    if d.get('nas_t') == abans or meus is False:
+        d['nas_t'] = firma_temes(temes)
+    d.pop('fmt_m', None)        # la carpeta es torna a formatar: els arxius també perden el nom del grup davant
+    log(f"  Temes sense el nom del grup davant: «{nom_art} - {d.get('titol', '')}» («{titols[0]}» -> «{nets[0]}»)")
+    return True
+
+
 def passa_estrelles(x, w):
     """Les estrelles (★) dels temes de la fitxa que se'n va passen als mateixos temes de la que es queda."""
     tw = [destacat(t) for t in w.get('temes') or []]
@@ -2729,6 +2864,10 @@ def main():
         except Exception as e:
             log(f'NAS: error posant el format als arxius {e!r}')
         if a.mode == 'nit':
+            try:
+                revisa_falten(int(CFG.get('falten_per_nit', 150) or 150))
+            except Exception as e:
+                log(f'Temes que falten: error {e!r}')
             try:
                 revisa_titols(int(CFG.get('titols_per_nit', 100) or 100))
             except Exception as e:

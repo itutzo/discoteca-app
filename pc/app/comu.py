@@ -377,6 +377,67 @@ def temes_nets(temes, titol=''):
     return ts, artista
 
 
+_HASH_FINAL = re.compile(r'[\s\-_]+[\(\[]?(?=[0-9a-f]*\d)[0-9a-f]{8}[\)\]]?$', re.I)
+
+
+def art_carpeta(nom):
+    """Norma de l'Ignasi (14/11/2026): a la CARPETA, els grups que comencen amb «The» van amb «, The» al final
+    («The Fumes» -> «Fumes, The - 2006 - Guns Of Gold»)."""
+    nom = str(nom or '').strip()
+    m = re.match(r'^the\s+(.+)$', nom, re.I)
+    if m and N(m.group(1)) and not re.search(r',\s*the$', nom, re.I):
+        return f'{m.group(1).strip()}, The'
+    return nom
+
+
+def art_arxius(nom):
+    """... i als ARXIUS de dins, amb «The» davant («Fumes, The» -> «The Fumes - Guns Of Gold - 01 - ...»)."""
+    nom = str(nom or '').strip()
+    m = re.match(r'^(.+?),\s*the$', nom, re.I)
+    return f'The {m.group(1).strip()}' if m else nom
+
+
+def neteja_titols_temes(temes, artista='', titol='', numeros=True):
+    """Els títols dels temes tal com s'han de veure a la fitxa i als noms dels arxius, sense el soroll que porten els
+    arxius baixats (norma del 13/11/2026, disc de Dozer): el nom del grup o del disc davant de cada tema («Dozer -
+    Rising», «[California Breed] The Way», «the_magpie_salute-sooner_or_later»), el número de pista sense separar
+    («(01) …», «01 …»), guions baixos i un codi de descàrrega al final («…-490a0c8c»). Cada neteja només es fa si es
+    repeteix a la majoria de temes (60 %, i com a mínim 2), i el prefix només es treu si és l'artista o el títol del
+    disc: un recopilatori amb un artista diferent a cada tema («Brad Vs. Satchel») i el tema que es diu com el grup
+    («Bad Company» de Bad Company) es queden igual. Torna la llista amb el mateix ordre i llargada."""
+    ts = [str(t or '') for t in temes or []]
+    plens = [i for i, t in enumerate(ts) if t.strip()]
+    n = len(plens)
+    if n < 2:
+        return ts
+    minim = max(2, int(0.6 * n + 0.999))
+    out = list(ts)
+    baixos = sum(1 for i in plens if '_' in ts[i] and ' ' not in ts[i].strip()) >= minim
+    if baixos:
+        out = [re.sub(r'\s+', ' ', t.replace('_', ' ')).strip() if t.strip() else t for t in out]
+    # (als noms dels arxius no: si després del número de pista en queda un altre, és del títol, «1 Ghosts I» de NIN)
+    if numeros and sum(1 for i in plens if _NUM_INICI.match(out[i].strip())) >= minim:
+        out = [_NUM_INICI.sub('', t.strip(), count=1) if t.strip() and _NUM_INICI.match(t.strip()) else t for t in out]
+    valids = {N(artista), N(nom_net(artista, artista=True, the_davant=True)[0]), N(titol), N(nom_net(titol)[0])} - {''}
+    for _ in range(2):          # «[Grup] Disc - Tema»: pot haver-hi dos prefixos seguits
+        fet = False
+        for _tipus, rx in _PREFIXOS:
+            casa = [i for i in plens if (lambda m: m and N(m.group(1)) in valids)(rx.match(out[i].strip()))]
+            if len(casa) >= minim:
+                for i in casa:
+                    out[i] = rx.match(out[i].strip()).group(2).strip()
+                fet = True
+                break
+        if not fet:
+            break
+    if sum(1 for i in plens if _HASH_FINAL.search(out[i])) >= minim:
+        out = [_HASH_FINAL.sub('', t) if t.strip() else t for t in out]
+    if baixos:
+        out = [' '.join(w[:1].upper() + w[1:] for w in t.split(' ')) if t.strip() else t for t in out]
+    out = [o if o.strip() else t for o, t in zip(out, ts)]       # mai deixar un tema sense nom
+    return out
+
+
 def TT(s):
     """Clau d'un tema per comparar: com NT() però sense res del que va entre parèntesis o claudàtors
     («Killing Time (Original Demo Version)» = «Killing Time», «Last Bandit (Live Electric)» = «Last Bandit»)."""
