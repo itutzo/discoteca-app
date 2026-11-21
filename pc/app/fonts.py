@@ -14,10 +14,10 @@ from comu import N, NT, log
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/130.0 Safari/537.36')
 _ultim = {}
-API_RITME = ('api.discogs.com', 'musicbrainz.org', 'ws.audioscrobbler.com', 'coverartarchive.org')
+API_RITME = ('api.discogs.com', 'musicbrainz.org', 'ws.audioscrobbler.com', 'coverartarchive.org', 'www.wikidata.org')
 PAUSA = {'www.allmusic.com': 2.0, 'api.discogs.com': 1.05, 'www.discogs.com': 3.0,
          'ws.audioscrobbler.com': 0.25, 'music.apple.com': 2.0,
-         'musicbrainz.org': 1.1, 'coverartarchive.org': 0.5}
+         'musicbrainz.org': 1.1, 'coverartarchive.org': 0.5, 'www.wikidata.org': 0.5}
 
 
 try:
@@ -719,10 +719,11 @@ def musicbrainz(artista, titol):
         next((x for x in cands if NT(titol) in NT(x.get('title')) or NT(x.get('title')) in NT(titol)), None)
     if not rg:
         return None
-    g = _mb(f"/release-group/{rg['id']}", inc='genres+releases') or {}
+    g = _mb(f"/release-group/{rg['id']}", inc='genres+releases+url-rels') or {}
     out = {'url': f"https://musicbrainz.org/release-group/{rg['id']}",
            'any': (g.get('first-release-date') or rg.get('first-release-date') or '')[:4],
            'generes': [x['name'] for x in sorted(g.get('genres') or [], key=lambda x: -int(x.get('count') or 0))],
+           'wikidata': _qid_wikidata(g.get('relations')),
            'caratula': f"https://coverartarchive.org/release-group/{rg['id']}/front-500",
            'temes': [], 'credits': []}
     # l'edició oficial més antiga és la que té els crèdits de l'original
@@ -750,7 +751,64 @@ def musicbrainz(artista, titol):
     return out
 
 
+def _qid_wikidata(relations):
+    """L'element de Wikidata (Q…) que MusicBrainz enllaça a un disc, o ''."""
+    for r in relations or []:
+        if r.get('type') == 'wikidata':
+            m = re.search(r'/(Q\d+)$', str((r.get('url') or {}).get('resource') or ''))
+            if m:
+                return m.group(1)
+    return ''
+
+
+def mb_grup(rg_id):
+    """Gèneres i element de Wikidata d'un disc de MusicBrainz (release-group) que la fitxa ja té enllaçat i comprovat:
+    una sola consulta (per triar l'estil per coincidència de fonts, 21/11/2026)."""
+    g = _mb(f'/release-group/{rg_id}', inc='genres+url-rels') or {}
+    return {'generes': [x['name'] for x in sorted(g.get('genres') or [], key=lambda x: -int(x.get('count') or 0))],
+            'wikidata': _qid_wikidata(g.get('relations'))}
+
+
+# ---------------- Wikidata (els gèneres de la fitxa del disc a la Wikipedia) ----------------
+WD = 'https://www.wikidata.org/w/api.php'
+WD_UA = {'User-Agent': 'Discoteca/1.0 ( https://github.com/itutzo/discoteca-app )', 'Accept': 'application/json'}
+
+
+def wikidata_generes(qid):
+    """Els gèneres (propietat P136) d'un disc a Wikidata, en anglès, en l'ordre de la fitxa: com a màxim 2 consultes.
+    L'element ve de l'enllaç de MusicBrainz, així que és el disc exacte (no es busca pel nom)."""
+    if not re.fullmatch(r'Q\d+', str(qid or '')):
+        return []
+    q = {'action': 'wbgetentities', 'ids': qid, 'props': 'claims', 'format': 'json'}
+    e = get(WD + '?' + urllib.parse.urlencode(q), headers=WD_UA, json_=True) or {}
+    ids = []
+    for c in (((e.get('entities') or {}).get(qid) or {}).get('claims') or {}).get('P136') or []:
+        v = ((c.get('mainsnak') or {}).get('datavalue') or {}).get('value')
+        if isinstance(v, dict) and re.fullmatch(r'Q\d+', str(v.get('id') or '')) and v['id'] not in ids:
+            ids.append(v['id'])
+    if not ids:
+        return []
+    q = {'action': 'wbgetentities', 'ids': '|'.join(ids[:20]), 'props': 'labels', 'languages': 'en', 'format': 'json'}
+    l = (get(WD + '?' + urllib.parse.urlencode(q), headers=WD_UA, json_=True) or {}).get('entities') or {}
+    return [((l.get(i) or {}).get('labels') or {}).get('en', {}).get('value') for i in ids[:20]
+            if ((l.get(i) or {}).get('labels') or {}).get('en', {}).get('value')]
+
+
 # ---------------- Last.fm ----------------
+def lastfm_etiquetes_disc(artista, titol, key):
+    """Les etiquetes més posades a un disc a Last.fm (album.getinfo), en l'ordre de Last.fm."""
+    if not key:
+        return []
+    r = get('https://ws.audioscrobbler.com/2.0/?' + urllib.parse.urlencode(
+        {'method': 'album.getinfo', 'artist': artista, 'album': titol, 'api_key': key, 'format': 'json',
+         'autocorrect': 1}), json_=True) or {}
+    t = (r.get('album') or {}).get('tags') or {}
+    t = t.get('tag') if isinstance(t, dict) else []
+    if isinstance(t, dict):
+        t = [t]
+    return [x.get('name').strip() for x in t or [] if isinstance(x, dict) and (x.get('name') or '').strip()]
+
+
 def lastfm_similars(artista, key):
     if not key:
         return []

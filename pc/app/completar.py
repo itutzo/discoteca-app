@@ -13,6 +13,7 @@ Regles: només omple camps buits, mai no toca la classificació personal ni les 
 i marca tot el que afegeix com a «automàtic» perquè ho puguis revisar.
 """
 import argparse, datetime, json, os, re, shutil, sys, time, unicodedata
+from collections import Counter
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -293,8 +294,34 @@ def formata_arxius(d, arrel):
     if not m or not os.path.isdir(ruta):
         return 0
     art, tit = comu.art_arxius(m.group(1).strip()), m.group(3).strip()     # arxius: «The Fumes - ...» (14/11/2026)
-    discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
-             if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
+    # temes mal escrits que la fitxa ja ha corregit amb Discogs («Wister Time» -> «Wiser Time», 14/11/2026). Als discos
+    # dobles la correcció porta el CD, perquè el mateix tema pot tenir un nom bo diferent a cada CD («The Descent» ->
+    # «The Descent (Pages 1 & 2)» al CD 1 i «… (Original Demo)» al CD 2, «Postcards From A Young Man», 21/11/2026)
+    bons_cd, bons, dubte, vells = {}, {}, set(), []
+    for c_ in d.get('temes_corregits') or []:
+        ka, nb = N(c_[0]), majuscules(nom_carpeta(c_[1]))
+        if not ka or not nb:
+            continue
+        if len(c_) > 2 and re.match(r'^CD\d+$', str(c_[2])):
+            bons_cd[(int(str(c_[2])[2:]), ka)] = nb
+            vells.append((ka, int(str(c_[2])[2:])))
+            continue
+        if bons.get(ka, nb) != nb:
+            dubte.add(ka)
+        bons[ka] = nb
+    for ka in dubte:
+        bons.pop(ka)
+    # de quin CD és cada tema segons la fitxa (també amb el nom d'abans de corregir-lo); un títol que surt a més d'un
+    # CD (el disc i les maquetes) no diu de quin CD és l'arxiu
+    discs, dubte = {}, set()
+    temes_cd = [(N(t[1]), int(str(t[3])[2:])) for t in d.get('temes') or []
+                if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])]
+    for k_, v_ in temes_cd + vells:
+        if discs.get(k_, v_) != v_:
+            dubte.add(k_)
+        discs[k_] = v_
+    for k_ in dubte:
+        discs.pop(k_)
     canviats = errors = 0
     for root, _, files in os.walk(ruta):
         sub = os.path.relpath(root, ruta)
@@ -307,16 +334,26 @@ def formata_arxius(d, arrel):
             nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
                       tria=lambda c: cans.append(c) or c)
         neta = dict(zip(cans, [majuscules(x) for x in comu.neteja_titols_temes(cans, art, tit, numeros=False)]))
-        # temes mal escrits que la fitxa ja ha corregit amb Discogs («Wister Time» -> «Wiser Time», 14/11/2026)
-        bons = {N(a): majuscules(nom_carpeta(b)) for a, b in d.get('temes_corregits') or [] if N(a) and nom_carpeta(b)}
-        if bons:
-            neta = {c: bons.get(N(v), v) for c, v in neta.items()}
-        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
-                             tria=lambda c: neta.get(c, c)) for f in musica}
+
+        def nom_bo(f, cdc=int(mc.group(1)) if mc else None):
+            base, net = os.path.splitext(f)[0], []
+            x = nom_arxiu(art, tit, base, cdc, discs, tria=lambda c: net.append(neta.get(c, c)) or net[-1])
+            if not x or not net:
+                return x
+            k_ = N(net[-1])
+            bo = (bons_cd.get((x[0][0], k_)) if x[0][0] else None) or bons.get(k_)   # el nom bo, al CD de l'arxiu
+            if bo and bo != net[-1]:
+                x = nom_arxiu(art, tit, base, x[0][0] or cdc, discs, tria=lambda c: bo)
+            return x
+        nous = {f: nom_bo(f) for f in musica}
         # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3», Thelonious Monster) no és cap conflicte
         claus = [(x[0], os.path.splitext(f)[1].lower()) for f, x in nous.items() if x]
         # dos arxius del mateix format amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res
         if len(claus) != len(set(claus)):
+            continue
+        # en un disc doble, uns arxius saben de quin CD són i uns altres no: no es toca res (21/11/2026)
+        cds = {x[0][0] for x in nous.values() if x}
+        if discs and 0 in cds and len(cds) > 1:
             continue
         for f, x in nous.items():
             if not x:
@@ -1377,6 +1414,34 @@ def completa(d, artistes, estils_meus):
         corregeix_titol(d, dg['titol'], nom_art)
         auto.add('titol')
         canvis.append('titol')
+    # 1c. l'edició de Discogs es tria pel nombre de temes i pels títols (norma del 21/11/2026): si la trobada no té
+    # els mateixos temes que la fitxa o la carpeta, es busca la que hi encaixa entre les altres edicions del disc
+    if dg and not cancons_soltes(nom_art, titol):
+        try:
+            dg = millor_edicio(temes_nets or temes_crus, dg)
+        except Exception as e:
+            log(f'  Discogs (edició amb els mateixos temes): error {e!r}')
+    if dg and d.get('discogs_release') and d['discogs_release'] != dg['id']:
+        # l'edició que ja tenia la fitxa es queda si hi encaixa igual de bé (pot ser la del teu CD de la col·lecció);
+        # si la nova hi encaixa millor, les dades d'edició que havia posat el programa (segell i edició) es tornen a
+        # omplir amb la bona. Els teus camps, i el número de catàleg i el codi de barres, no es toquen.
+        meus_e = temes_nets or temes_crus
+        try:
+            vella = DG.release(d['discogs_release'])
+        except Exception as e:
+            log(f'  Discogs (edició de la fitxa): error {e!r}')
+            vella = None
+        pv = punts_edicio(meus_e, vella) if vella and vella.get('temes') else None
+        if pv and len([t for t in meus_e if NT(t)]) >= 3 and pv[1] >= TEMES_ENCAIXA * len([t for t in meus_e if NT(t)]) \
+                and pv >= punts_edicio(meus_e, dg):
+            if dg.get('master') and not vella.get('master'):
+                vella['master'] = dg['master']
+            dg = vella
+        else:
+            for k in ('segell', 'edicio'):      # omple() les torna a posar amb l'edició bona
+                if k in auto and d.get(k):
+                    d.pop(k, None)
+                    auto.discard(k)
     if dg:
         if not nom_art and dg.get('artista'):
             d['artista'] = id_artista(dg['artista'], artistes)
@@ -1427,11 +1492,28 @@ def completa(d, artistes, estils_meus):
             (dg_.get('estils') or [None])[0] or ' '.join(w.capitalize() for w in (mb_.get('generes') or [''])[0].split()) or None
         omple('estil', est)
 
+    # 2c. L'estil que diuen més fonts (norma del 21/11/2026), un sol cop per disc (EST_VERSIO)
+    if (dg or mb) and d.get('est_v') != EST_VERSIO and not cancons_soltes(nom_art, titol):
+        try:
+            d['auto'] = sorted(auto)            # vots_estil() mira si l'estil l'havia posat el programa
+            vots = fonts_estil(d, nom_art, dg or {}, mb or {})
+            nou, detall = decideix_estil(d, vots, estils_vocabulari(), estils_meus)
+            if aplica_estil(d, nou, detall, auto):
+                canvis.append('estil')
+        except Exception as e:
+            log(f'  Estil per coincidència de fonts: error {e!r}')
+
     # 3. Temes: conservem els teus noms i hi afegim el compositor
     ref = (am or {}).get('temes') or (dg or {}).get('temes') or (mb or {}).get('temes') or []
     ref_dg = (dg or {}).get('temes') or []
     ref_mb = (mb or {}).get('temes') or []
     temes = [list(x) + [''] * (6 - len(x)) for x in d.get('temes', [])]
+    abans_n = firma_temes(temes)
+    if normalitza_numeros(temes):           # «101, 102… 201» -> «Disc 1 01» (21/11/2026)
+        canvis.append('discs')
+        if d.get('nas_t') == abans_n:
+            d['nas_t'] = firma_temes(temes)
+        d.pop('fmt_m', None)
     if not temes and ref:
         temes = [[t['n'], t['titol'], '', '', 0, 0] for t in ref]
         auto.add('temes'); canvis.append('temes')
@@ -1460,7 +1542,7 @@ def completa(d, artistes, estils_meus):
         try:
             if corregeix_temes(d, dg.get('temes')):
                 canvis.append('temes')
-            d['tcor_rev'] = AVUI
+            d['tcor_rev'], d['tcor_v'] = AVUI, TCOR_VERSIO
         except Exception as e:
             log(f'  Temes mal escrits: error {e!r}')
     # 3b. Cançons que falten a la carpeta respecte a Discogs (norma del 14/11/2026)
@@ -2069,6 +2151,201 @@ def unifica_estils():
             log(f'Estils: {n} estils i gèneres escrits diferent unificats')
 
 
+# ------------------------------------------------------------------ l'estil que diuen més fonts (21/11/2026)
+# Norma de l'Ignasi: l'estil de cada disc és el que té més coincidències entre les fonts: AllMusic (el que ja hi ha a la
+# fitxa, que ve de l'Access o d'AllMusic), Discogs, MusicBrainz, la Wikipedia (gèneres de Wikidata del disc que enllaça
+# MusicBrainz) i Last.fm. No el de la primera font que es va trobar. Els noms escrits diferent ja s'ajunten a part
+# (unifica_estils); aquí es tria QUIN estil és.
+EST_VERSIO = 1          # quan canvia la manera de triar, es puja i tots els discos es tornen a mirar
+# els gèneres amplis no són estils: mai guanyen, i un estil així a la fitxa («Rock») no es defensa amb els vots del
+# gènere (MusicBrainz i Last.fm hi posen gairebé sempre «rock»)
+ESTILS_AMPLIS = {'rock', 'pop', 'jazz', 'blues', 'electronic', 'electronica', 'folk', 'country', 'metal', 'punk',
+                 'alternative', 'indie', 'soul', 'funk', 'reggae', 'classical', 'hiphop', 'rap', 'randb', 'rb',
+                 'world', 'latin', 'music', 'instrumental', 'vocal', 'acoustic'}
+_E_VOCAB = []
+
+
+def estils_vocabulari(discs=None):
+    """El vocabulari d'estils (etiquetes de Last.fm desades i paraules dels estils de la discoteca), un sol cop."""
+    if not _E_VOCAB:
+        meus = {}
+        for d in discs if discs is not None else llegeix('discs.json', []):
+            for w in set(re.findall(r'[a-z0-9]+', comu._sense_accents(d.get('estil') or '').lower())):
+                meus[w] = meus.get(w, 0) + 1
+        _E_VOCAB.append(comu.Estils(llegeix('lastfm.json', {}), meus))
+    return _E_VOCAB[0]
+
+
+def estils_de_la_discoteca(discs):
+    out = {}
+    for d in discs:
+        if d.get('estil'):
+            out.setdefault(N(d['estil']), d['estil'])
+            out.setdefault(comu.clau_estil(d['estil']), d['estil'])
+    return out
+
+
+def vots_estil(d, dg=None, mb=None, wd=None, lf=None):
+    """Els estils que dona cada font per a aquest disc: {font: [estils]}. L'estil que ja hi ha a la fitxa compta com a
+    vot d'AllMusic/Access si no l'havia posat el programa (o d'AllMusic si el va posar amb AllMusic); si el va posar el
+    programa amb Discogs o MusicBrainz, ja compta com a vot d'aquella font i no es compta dues vegades."""
+    v = {}
+    if d.get('estil'):
+        if 'estil' not in (d.get('auto') or []):
+            v['AllMusic/Access'] = [d['estil']]
+        elif (d.get('fonts') or {}).get('AllMusic'):
+            v['AllMusic'] = [d['estil']]
+    if dg and dg.get('estils'):
+        v['Discogs'] = list(dg['estils'])
+    if mb and mb.get('generes'):
+        v['MusicBrainz'] = list(mb['generes'])
+    if wd:
+        v['Wikipedia'] = list(wd)
+    if lf:
+        v['Last.fm'] = list(lf)[:10]
+    return v
+
+
+def decideix_estil(d, vots, E=None, estils_meus=None):
+    """Quin estil ha de tenir el disc segons les fonts. Torna (estil nou o None si es queda el que hi ha, {estil: [fonts]}).
+    - cada font vota una vegada cada estil que dona (escrit de qualsevol manera: «Alternative Rock» = «alternative rock»);
+    - Last.fm només confirma estils que dona una altra font (les seves etiquetes porten soroll: «welsh», «2010»);
+    - guanya l'estil amb més fonts, si n'hi ha com a mínim 2; a igualtat, el que ja hi ha a la fitxa i després el de
+      Discogs; els gèneres amplis («Rock», «Pop», «Jazz»…) no guanyen mai;
+    - l'estil de la fitxa només es canvia si un altre té MÉS fonts (o si a la fitxa hi ha un gènere ampli)."""
+    E = E or estils_vocabulari()
+    estils_meus = estils_meus or {}
+    clau = lambda x: comu.clau_estil(x, E)
+    k_gen = clau(d.get('genere')) if d.get('genere') else ''
+    ampli = lambda k: k in ESTILS_AMPLIS or k == k_gen
+    per_k, nom, ordre = {}, {}, {}
+    for font, llista in vots.items():
+        if font == 'Last.fm':
+            continue
+        for x in llista:
+            k = clau(x)
+            if not k:
+                continue
+            per_k.setdefault(k, set()).add(font)
+            ordre.setdefault(k, len(ordre))
+            if k not in nom or (font == 'Discogs' and nom[k][1] != 'Discogs'):
+                nom[k] = (x, font)
+    for x in vots.get('Last.fm') or []:
+        k = clau(x)
+        if k in per_k:
+            per_k[k].add('Last.fm')
+    nom_bo = lambda k: estils_meus.get(k) or (nom[k][0] if nom[k][1] in ('Discogs', 'AllMusic', 'AllMusic/Access')
+                                               else comu._titol_estil(nom[k][0]))
+    detall = {nom_bo(k): sorted(f) for k, f in sorted(per_k.items(), key=lambda kv: (-len(kv[1]), ordre[kv[0]]))[:6]}
+    actual = d.get('estil') or ''
+    k_act = clau(actual) if actual else ''
+    cands = [k for k in per_k if not ampli(k)]
+    if not cands:
+        return None, detall
+    millor = max(cands, key=lambda k: (len(per_k[k]), k == k_act, 'Discogs' in per_k[k], -ordre[k]))
+    if len(per_k[millor]) < 2 or millor == k_act:
+        return None, detall
+    if actual and not ampli(k_act) and len(per_k.get(k_act, ())) >= len(per_k[millor]):
+        return None, detall
+    return nom_bo(millor), detall
+
+
+def aplica_estil(d, nou, detall, auto=None):
+    """Desa la decisió: l'estil nou (si n'hi ha), el d'abans a `estil_abans` (el primer cop) i les fonts de cada estil
+    a `est_fonts`. Torna True si ha canviat l'estil."""
+    d['est_v'], d['est_rev'] = EST_VERSIO, AVUI
+    if detall:
+        d['est_fonts'] = detall
+    if not nou or nou == d.get('estil'):
+        return False
+    vell = d.get('estil') or ''
+    d.setdefault('estil_abans', vell)
+    d['estil'] = nou
+    if auto is not None:
+        auto.add('estil')
+    else:
+        d['auto'] = sorted(set(d.get('auto') or []) | {'estil'})
+    fonts_nou = ', '.join((detall or {}).get(nou) or [])
+    log(f"  Estil de «{d.get('titol', '')}»: «{vell}» -> «{nou}» ({fonts_nou})")
+    try:
+        with open(os.path.join(comu.DADES, 'estils_canviats.txt'), 'a', encoding='utf-8') as f:
+            f.write(f"{AVUI}\t{d.get('id')}\t{d.get('titol', '')}\t{vell}\t{nou}\t{fonts_nou}\n")
+    except OSError:
+        pass
+    return True
+
+
+def copia_estils_abans(discs):
+    """El primer cop, una còpia de l'estil de cada disc abans de triar-lo per les fonts (per poder-ho desfer)."""
+    fetes = llegeix('migracions.json', {})
+    if fetes.get('estils_consens'):
+        return
+    copia = os.path.join(comu.COPIES, 'estils-consens-abans.json')
+    if not os.path.exists(copia):
+        with open(copia, 'w', encoding='utf-8') as f:
+            json.dump({str(d.get('id')): d.get('estil') or '' for d in discs}, f, ensure_ascii=False)
+    fetes['estils_consens'] = AVUI
+    desa('migracions.json', fetes)
+
+
+def fonts_estil(d, nom_art, dg=None, mb=None):
+    """Recull el que diuen les fonts de l'estil d'un disc. `dg`/`mb`: el que ja s'ha consultat (completa); si no, el
+    disc de Discogs de la fitxa i el de MusicBrainz que ja té enllaçat. Torna els vots ({font: [estils]})."""
+    if dg is None and d.get('discogs_release'):
+        dg = DG.release(d['discogs_release'])
+    if mb is None:
+        m = re.search(r'/release-group/([0-9a-f-]{36})', str((d.get('fonts') or {}).get('MusicBrainz') or ''))
+        mb = fonts.mb_grup(m.group(1)) if m else None
+    wd = []
+    try:
+        wd = fonts.wikidata_generes((mb or {}).get('wikidata'))
+    except Exception as e:
+        log(f'  Wikidata: error {e!r}')
+    lf = []
+    try:
+        lf = fonts.lastfm_etiquetes_disc(nom_cerca(nom_art), d.get('titol', ''), LFM) if nom_art and d.get('titol') else []
+    except Exception as e:
+        log(f'  Last.fm (etiquetes del disc): error {e!r}')
+    return vots_estil(d, dg, mb, wd, lf)
+
+
+def revisa_estils(n=200):
+    """Cada nit, una tanda de discos: l'estil que diuen més fonts (`decideix_estil()`). Unes 4 consultes per disc
+    (Discogs, que sol ser a la memòria de la mateixa nit, MusicBrainz, Wikidata i Last.fm). Si mentrestant has canviat
+    l'estil d'un disc, es respecta. Un cop mirat (`est_v`), el disc no es torna a mirar fins que canviï la manera de
+    triar (EST_VERSIO), així que si després el canvies a mà, es queda el teu."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+    artistes = llegeix('artistes.json', {})
+    copia_estils_abans(discs)
+    cua = [d for d in discs if d.get('est_v') != EST_VERSIO
+           and (d.get('discogs_release') or (d.get('fonts') or {}).get('MusicBrainz'))
+           and not cancons_soltes(artistes.get(str(d.get('artista')), ''), d.get('titol', ''))][:n]
+    if not cua:
+        return 0
+    E, estils_meus = estils_vocabulari(discs), estils_de_la_discoteca(discs)
+    resultat = {}
+    for d in cua:
+        try:
+            vots = fonts_estil(d, artistes.get(str(d.get('artista')), ''))
+        except Exception as e:
+            log(f'  Estils: error {e!r} («{d.get("titol", "")}»); la resta es mirarà un altre dia')
+            break
+        resultat[d['id']] = (d.get('estil'), *decideix_estil(d, vots, E, estils_meus))
+    canviats = 0
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        for d in discs:
+            if d.get('id') in resultat:
+                abans, nou, detall = resultat[d['id']]
+                if d.get('estil') != abans:
+                    continue                # l'has canviat mentrestant: mana el teu
+                canviats += aplica_estil(d, nou, detall)
+        desa('discs.json', discs)
+    log(f'Estils per coincidència de fonts: {len(resultat)} discos mirats, {canviats} canviats')
+    return len(resultat)
+
+
 def tanda(mode, n, id_=None):
     artistes = llegeix('artistes.json', {})
     discs = llegeix('discs.json', [])
@@ -2528,64 +2805,278 @@ def discs_diferents(d1, d2, al_nas):
     return not temes_equivalents(d1.get('temes'), d2.get('temes'))
 
 
+# notes d'edició que algunes edicions de Discogs posen als temes i que no són del títol («(2009 Remaster)»,
+# «- Remastered 2011», «(Bonus Track)», «(Album Version)», que vol dir la de sempre): no es copien a la fitxa
+_NOTA_EDICIO = re.compile(r'\s*[\(\[][^\(\)\[\]]*\b(?:re-?master\w*|reissue|deluxe|expanded|anniversary|bonus(?: track)?|(?:album|lp) version)\b[^\(\)\[\]]*[\)\]]'
+                          r'|\s+[-–]\s+(?:(?:19|20)\d{2}\s+)?(?:digital(?:ly)?\s+)?re-?master\w*(?:\s+(?:19|20)\d{2})?(?:\s+version)?\s*$', re.I)
+_CUA_PAR = re.compile(r'(?:\s*[\(\[][^\(\)\[\]]*[\)\]])+\s*$')
+_GRUP_PAR = re.compile(r'[\(\[][^\(\)\[\]]*[\)\]]')
+# cometes tipogràfiques i rectes, «…» i «...», claudàtors i parèntesis: per a la fitxa són el mateix
+_FORMA = str.maketrans({'’': "'", '‘': "'", '´': "'", '`': "'", '“': '"', '”': '"',
+                        '„': '"', '…': '...', '[': '(', ']': ')', '{': '(', '}': ')'})
+_RECTES = str.maketrans({'’': "'", '‘': "'", '´': "'", '“': '"', '”': '"', '„': '"'})
+
+
+def _forma(x):
+    """Com està escrit un títol, per comparar: cometes rectes, «...», claudàtors com parèntesis i «&» = «and»."""
+    return re.sub(r'\s*&\s*', ' and ', str(x or '').translate(_FORMA))
+
+
+def _treu_res(meu, seu):
+    """True si el títol de Discogs, amb les mateixes paraules, TREU alguna cosa del teu: un signe (apòstrof, coma,
+    punt, guionet, interrogant...), un article («A Million Miles» -> «Million Miles», «King Of The Kings» -> «King Of
+    Kings») o un accent. Discogs també té errades («Doin'» -> «Doin», «Don't» -> «Dont», «Rock-A-Roller» -> «Rock A
+    Roller»): llavors es queda el teu. Si només n'hi afegeix («Auto-Intoxication», «Makin' Sunshine», «Getting
+    Thru?»), no."""
+    a, b = _forma(meu), _forma(seu)
+    signes = lambda x: Counter(c for c in x if not c.isalnum() and not c.isspace())
+    articles = lambda x: Counter(w for w in re.findall(r'[a-z0-9]+', x.lower()) if w in ('the', 'a', 'an'))
+    accents = lambda x: sum(1 for c in unicodedata.normalize('NFD', x) if unicodedata.combining(c))
+    return bool(signes(a) - signes(b)) or bool(articles(a) - articles(b)) or accents(a) > accents(b)
+
+
+def _fusiona(meu, seu):
+    """Ajunta paraula per paraula el teu títol i el de Discogs (que s'assemblen): de cada paraula que és la mateixa es
+    queda la que no perd res (si Discogs hi treu un apòstrof, un signe o un accent, la teva; si n'hi afegeix, la seva);
+    les paraules amb una errada són les de Discogs («Don't Where» -> «Down Where»); el que Discogs hi afegeix
+    s'afegeix («Storm» -> «The Storm», «Impossible Jam» -> «Impossible / Jam»), i el que Discogs no porta (un article,
+    «(Bonus Track)») es queda. Si només canvien els espais, es queden els teus."""
+    a, b = meu.split(), seu.split()
+    k = lambda w: re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFD', _forma(w)).encode('ascii', 'ignore').decode().lower())
+    ka, kb = [k(w) for w in a], [k(w) for w in b]
+    signes = lambda x: Counter(c for c in _forma(x) if not c.isalnum() and not c.isspace())
+    out = []
+    for op, i1, i2, j1, j2 in SequenceMatcher(None, ka, kb, autojunk=False).get_opcodes():
+        A, B = a[i1:i2], b[j1:j2]
+        if op == 'equal':
+            for x, y in zip(A, B):
+                igual_forma = x.lower() != y.lower() and _forma(x).lower().strip() == _forma(y).lower().strip()  # «&»/«and», cometes
+                out.append(x if _treu_res(x, y) or igual_forma else y)
+        elif op == 'delete':
+            out += A                                    # Discogs no treu res del teu
+        elif op == 'insert':
+            out += B                                    # el que Discogs hi afegeix
+        elif ''.join(ka[i1:i2]) == ''.join(kb[j1:j2]):  # les mateixes lletres amb els espais o els signes canviats
+            sa, sb = ' '.join(A), ' '.join(B)
+            out += A if (_treu_res(sa, sb) or signes(sa) == signes(sb)) else B
+        else:
+            out += B                                    # una errada d'escriptura: la paraula de Discogs
+    return ' '.join(out)
+
+
+def titol_tema_bo(meu, seu):
+    """El títol que ha de tenir a la fitxa un tema que s'ha aparellat amb un tema del disc de Discogs (norma general
+    del 21/11/2026, «Postcards From A Young Man»), o None si s'ha de quedar com està:
+    - només canvien majúscules, espais, el tipus de cometes («’»/«'»), «…»/«...», claudàtors/parèntesis o
+      «&»/«and»: es queda com està;
+    - números diferents («Part 1»/«Part 2»): es queda com està (són temes diferents);
+    - el mateix títol amb signes diferents: el de Discogs si n'hi afegeix («Auto Intoxication» -> «Auto-Intoxication»,
+      «It's Not War Just...» -> «(It's Not War) Just...»), el teu si Discogs en treu («Doin'» -> «Doin») o hi treu un
+      article («A Million Miles» -> «Million Miles»);
+    - Discogs hi afegeix el que va entre parèntesis al final («The Descent» -> «The Descent (Pages 1 & 2)»,
+      «Hazelton Avenue» -> «Hazelton Avenue (Original Demo)»): s'hi afegeix; si el parèntesi és teu i Discogs no el
+      porta («(Bonus Track)»), es queda; si tots dos en porten un de diferent, no es toca;
+    - una errada d'escriptura (85 % de semblança: «Hazleton» -> «Hazelton», «Wister Time» -> «Wiser Time»): el de
+      Discogs, mantenint el teu parèntesi del final si Discogs no en porta.
+    Les notes d'edició de Discogs («(2009 Remaster)», «(Bonus Track)», «(Album Version)») no es copien mai, i les
+    cometes tipogràfiques de Discogs passen a rectes, com a la resta de la fitxa."""
+    seu = re.sub(r'\s+', ' ', _NOTA_EDICIO.sub('', str(seu or ''))).strip().translate(_RECTES)
+    m = re.fullmatch(r'"([^"]+)"', seu)          # tot el títol entre cometes («"I Ain't Got No"»)
+    if m:
+        seu = m.group(1).strip()
+    meu = str(meu or '')
+    if not seu or not NT(seu):
+        return None
+    igual = lambda x: re.sub(r'\s+', '', _forma(x).lower())
+    if igual(meu) == igual(seu):
+        return None
+    xifres = lambda x: re.findall(r'\d+', comu.TF(x))       # del títol, no del parèntesi del final («(Pages 1 & 2)»)
+    if xifres(meu) != xifres(seu):
+        return None
+    if NT(meu) == NT(seu):                      # les mateixes paraules: només canvien signes, articles o majúscules
+        nou = _fusiona(meu, seu)
+        return None if igual(nou) == igual(meu) else nou
+    cua_meu, cua_seu = _CUA_PAR.search(meu), _CUA_PAR.search(seu)
+    base_meu = meu[:cua_meu.start()] if cua_meu else meu
+    base_seu = seu[:cua_seu.start()] if cua_seu else seu
+    cm, cs = (cua_meu.group(0) if cua_meu else ''), (cua_seu.group(0) if cua_seu else '')
+    # 1. el títol sense el parèntesi del final: el mateix (signes) o una errada d'escriptura
+    if NT(base_meu) == NT(base_seu) or (len(NT(base_meu)) >= 4
+                                         and SequenceMatcher(None, comu.TF(meu), comu.TF(seu)).ratio() >= 0.85):
+        base = _fusiona(base_meu, base_seu)
+    else:
+        return None
+    # 2. el parèntesi del final
+    if not cs or not cm:
+        cua = cm or cs                          # el teu es queda; si no en tens, el de Discogs
+    else:
+        g_meu = [NT(g) for g in _GRUP_PAR.findall(cm)]
+        g_seu = [NT(g) for g in _GRUP_PAR.findall(cs)]
+        if g_meu == g_seu:                      # el mateix parèntesi escrit diferent
+            cua = _fusiona(cm.strip(), cs.strip())
+        elif set(g_meu) <= set(g_seu):          # Discogs hi posa més informació
+            cua = cs
+        else:
+            return None                         # parèntesis diferents: no es toca
+    nou = (base.strip() + ' ' + cua.strip()).strip()
+    return None if igual(nou) == igual(meu) else nou
+
+
 def corregeix_temes(d, temes_dg):
-    """Norma de l'Ignasi (14/11/2026): els temes mal escrits es corregeixen sols amb els del disc trobat a Discogs
-    («Wister Time» -> «Wiser Time», «Rich Girlg» -> «Rich Girl»). És una excepció a «no sobreescriure», com els títols
-    dels discos. Només si el disc encaixa (el 60 % dels temes iguals), si la diferència és una errada d'escriptura del
-    títol mateix (no el que va entre parèntesis, ni números diferents: «Part 1»/«Part 2») i si un sol tema de Discogs
-    s'hi assembla. Es desa el canvi a `temes_corregits` i a dades/titols_corregits.txt; les estrelles, els compositors
-    i la resta del tema no es toquen, i els arxius del NAS es tornaran a anomenar (`formata_arxius`). Torna quants."""
+    """Norma de l'Ignasi (14/11/2026, ampliada el 21/11/2026): els títols dels temes de la fitxa queden com els del
+    disc de Discogs que hi encaixa: errades d'escriptura («Wister Time» -> «Wiser Time»), signes («Auto Intoxication»
+    -> «Auto-Intoxication») i el que Discogs posa entre parèntesis al final («The Descent (Pages 1 & 2)»). És una
+    excepció a «no sobreescriure», com els títols dels discos. Cada tema de la fitxa es compara amb un sol tema de
+    Discogs, i cada tema de Discogs és d'un sol tema de la fitxa (`comu.aparella_temes()`), així que els discos dobles
+    amb els mateixos temes a cada CD (disc + maquetes) també es corregeixen. Només si el disc encaixa (el 60 % dels
+    temes aparellats). Les regles de cada tema són a `titol_tema_bo()`. Es desa el canvi a `temes_corregits` i a
+    dades/titols_corregits.txt; les estrelles, els compositors i la resta del tema no es toquen, i els arxius del NAS
+    es tornaran a anomenar (`formata_arxius`). Torna quants."""
     temes = d.get('temes') or []
     seus = [x.get('titol') for x in temes_dg or [] if NT(x.get('titol'))]
-    meus = [t for t in temes if len(t) > 1 and NT(t[1])]
-    if len(meus) < 3 or len(seus) < 3 or cancons_soltes('', d.get('titol', '')):
+    idx = [i for i, t in enumerate(temes) if len(t) > 1 and NT(t[1])]
+    if len(idx) < 3 or len(seus) < 3 or cancons_soltes('', d.get('titol', '')):
         return 0
-    if comu.temes_coincidents([t[1] for t in meus], seus) < TEMES_ENCAIXA * len(meus):
+    parelles = comu.aparella_temes([temes[i][1] for i in idx], seus)
+    if len(parelles) < TEMES_ENCAIXA * len(idx):
         return 0
-    exactes = {NT(t[1]) for t in meus}
-    xifres = lambda s: re.findall(r'\d+', NT(s))
     firma_abans = firma_temes(temes)
     fets = []
-    for t in meus:
-        a = NT(t[1])
-        if len(a) < 4 or any(NT(b) == a for b in seus):
-            continue
-        cands = []
-        for b in seus:
-            nb = NT(b)
-            if nb in exactes or comu.TT(b) == comu.TT(t[1]) or xifres(b) != xifres(t[1]):
-                continue        # ja és d'un altre tema, o només canvia el que va entre parèntesis
-            r = SequenceMatcher(None, comu.TT(t[1]), comu.TT(b)).ratio()
-            if r >= 0.85:
-                cands.append((r, b))
-        cands.sort(reverse=True)
-        if not cands or (len(cands) > 1 and cands[0][0] - cands[1][0] < 0.05):
-            continue
-        nou = cands[0][1]
-        # el que hi havia entre parèntesis al final es manté («... (Bonus Track)»)
-        cua = re.search(r'\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$', t[1])
-        if cua and not re.search(r'[\(\[]', nou):
-            nou = nou + cua.group(0)
-        fets.append([t[1], nou])
-        exactes.add(NT(nou))
-        t[1] = nou
+    for k, j in sorted(parelles.items()):
+        t = temes[idx[k]]
+        nou = titol_tema_bo(t[1], seus[j])
+        if nou and nou != t[1]:
+            # amb el CD del tema, perquè als discos dobles el mateix tema pot tenir un nom bo diferent a cada CD
+            fets.append([t[1], nou] + ([str(t[3])] if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) else []))
+            t[1] = nou
     if not fets:
         return 0
     d['temes_corregits'] = (d.get('temes_corregits') or []) + fets
     if d.get('nas_t') == firma_abans:
         d['nas_t'] = firma_temes(temes)
     d.pop('fmt_m', None)        # els arxius es tornaran a anomenar amb el nom bo
-    log(f"  Temes mal escrits corregits a «{d.get('titol', '')}»: " + ', '.join(f'«{a}» -> «{b}»' for a, b in fets[:5]))
+    log(f"  Temes corregits amb Discogs a «{d.get('titol', '')}»: " + ', '.join(f'«{a}» -> «{b}»' for a, b, *_ in fets[:5])
+        + (f' i {len(fets) - 5} més' if len(fets) > 5 else ''))
     try:
         with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
-            for a, b in fets:
+            for a, b, *_ in fets:
                 f.write(f"{AVUI}\ttema\t{d.get('titol', '')}: {a}\t{b}\t{d.get('carpeta', '')}\n")
     except OSError:
         pass
     return len(fets)
 
 
+def normalitza_numeros(temes):
+    """Números de pista de l'Access o de Discogs amb el CD a dins: «101», «102»… «201» o «1-01», «CD2-03» (norma del
+    21/11/2026). Passen al format de la fitxa: número del tema i, si hi ha més d'un CD, el disc a la columna `t[3]`
+    («CD1», «CD2»), que la fitxa mostra «Disc 1 01». Només si TOTS els temes tenen aquest format, els CD van seguits
+    (1, 2...) i dins de cada CD els números no es repeteixen; si no, no es toca res. Torna True si ha canviat."""
+    if len(temes or []) < 2 or any(len(t) > 3 and str(t[3]).strip() for t in temes):
+        return False
+    parts = []
+    for t in temes:
+        n = str(t[0] if t else '').strip()
+        m = re.match(r'^(?:(?:CD|Disc)\s*)?(\d{1,2})\s*[-.]\s*(\d{1,3})$', n, re.I) or re.match(r'^([1-9])(\d{2})$', n)
+        if not m or int(m.group(2)) < 1:
+            return False
+        parts.append((int(m.group(1)), int(m.group(2))))
+    discs = sorted({k for k, _ in parts})
+    if discs != list(range(1, len(discs) + 1)):
+        return False
+    for k in discs:
+        js = [j for kk, j in parts if kk == k]
+        if len(js) != len(set(js)):
+            return False
+    for t, (k, j) in zip(temes, parts):
+        while len(t) < 6:
+            t.append('' if len(t) < 4 else 0)
+        t[0] = str(j)
+        if len(discs) > 1:
+            t[3] = f'CD{k}'
+    temes.sort(key=lambda t: (int(str(t[3])[2:] or 0) if str(t[3]).startswith('CD') else 0, int(t[0])))
+    return True
+
+
+def normalitza_numeros_tots():
+    """A cada execució: els discos amb els números de pista a l'estil «101», «201» passen a «Disc 1 01»."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        fets = []
+        for d in discs:
+            abans = firma_temes(d.get('temes') or [])
+            if d.get('temes') and normalitza_numeros(d['temes']):
+                fets.append(d)
+                if d.get('nas_t') == abans:
+                    d['nas_t'] = firma_temes(d['temes'])    # el format nou no vol dir que hagis canviat els temes
+        if fets:
+            desa('discs.json', discs)
+            log(f"Números de pista: {len(fets)} discos passen de «101, 102…» a «Disc 1 01»: "
+                + ', '.join(d.get('titol', '') for d in fets[:8]) + ('…' if len(fets) > 8 else ''))
+    return len(fets)
+
+
+def punts_edicio(meus, r):
+    """Com encaixa una edició de Discogs amb els temes de la fitxa: (temes aparellats un a un menys mig punt per cada
+    tema de diferència en el nombre, temes aparellats). Com més alt, millor."""
+    meus = [t for t in meus or [] if NT(t)]
+    s = [t['titol'] for t in (r or {}).get('temes') or [] if NT(t.get('titol'))]
+    ig = comu.temes_aparellats(meus, s)
+    return (ig - 0.5 * abs(len(s) - len(meus)), ig)
+
+
+def millor_edicio(meus, rel, max_prova=6):
+    """Norma prioritària de l'Ignasi (14/11 i 21/11/2026): l'edició de Discogs d'un disc es tria pel NOMBRE de temes i
+    pels seus TÍTOLS, no pel nom. Si l'edició trobada no té els mateixos temes que la fitxa (la carpeta té el disc
+    doble «Deluxe» de 24 temes i Discogs ha donat el CD senzill de 12), es miren les altres edicions del mateix disc
+    (versió principal de Discogs) i es queda la que té més temes aparellats un a un i un nombre de temes més pròxim.
+    Primer les edicions que encaixen amb el que es busca (més temes: Deluxe, Expanded, Box...; menys: l'àlbum normal)
+    i mai les no oficials ni les promocionals abans que les altres. Com a màxim `max_prova` edicions més (les respostes
+    de Discogs es guarden una hora). Torna l'edició bona (la mateixa si ja encaixava)."""
+    meus = [t for t in meus or [] if NT(t)]
+    if not rel or len(meus) < 3:
+        return rel
+    punts = lambda r: punts_edicio(meus, r)
+    p0 = punts(rel)
+    n_seus = len([t for t in rel.get('temes') or [] if NT(t.get('titol'))])
+    if n_seus == len(meus) and p0[1] == len(meus):
+        return rel
+    mid = rel.get('master_id')
+    if not mid:
+        return rel
+    m = (rel.get('master') or DG.api(f'/masters/{mid}') or {})
+    vers = DG.versions(mid)
+    mes = len(meus) > n_seus
+
+    def pista(v):
+        f = f"{v.get('format') or ''} {' '.join(v.get('major_formats') or [])}"
+        p = -3 if re.search(r'Unofficial|Promo|CDr|Test Pressing', f, re.I) else 0
+        gran = re.search(r'Deluxe|Expanded|Limited|Special|Anniversary|Box|Edition|Remaster|Reissue|Bonus', f, re.I)
+        p += 2 if (mes and gran) or (not mes and not gran) else 0
+        return p + (1 if re.search(r'\b(CD|File)\b', f) else 0)
+
+    cands = sorted((v for v in vers if v.get('id') != rel.get('id')), key=lambda v: (-pista(v), str(v.get('released') or '9999')))
+    millor, pm = rel, p0
+    for i in dict.fromkeys([m.get('main_release')] + [v.get('id') for v in cands[:max_prova]]):
+        if not i or i == rel.get('id'):
+            continue
+        r = DG.release(i)
+        if not r or not r.get('temes'):
+            continue
+        p = punts(r)
+        if p[1] >= TEMES_ENCAIXA * len(meus) and p > pm:
+            millor, pm = r, p
+            if p[0] >= len(meus):
+                break               # tots els temes i el mateix nombre: no cal mirar-ne més
+    if millor is not rel:
+        if rel.get('master') and not millor.get('master'):
+            millor['master'] = rel['master']
+        log(f"  Discogs: edició amb els temes de la carpeta ({len(meus)} temes): {millor.get('url')} "
+            f"en lloc de {rel.get('url')} ({n_seus} temes)")
+    return millor
+
+
 TEMES_ENCAIXA = 0.6
+TCOR_VERSIO = 2         # 21/11/2026: temes aparellats un a un, signes i parèntesis de Discogs, edició pels temes
 
 
 def marca_falten(d, temes_dg):
@@ -2613,13 +3104,17 @@ def revisa_falten(n=150):
     with comu.BLOC:
         discs = llegeix('discs.json', [])
     # també els que encara no s'han revisat per si tenen temes mal escrits (camp tcor_rev, 14/11/2026)
-    cua = [d for d in discs if d.get('discogs_release') and (d.get('carpeta') and not d.get('falt_rev') or not d.get('tcor_rev'))][:n]
+    # (21/11/2026: TCOR_VERSIO; quan canvia la manera de corregir els temes o de triar l'edició, es tornen a mirar tots)
+    cua = [d for d in discs if d.get('discogs_release') and (d.get('carpeta') and not d.get('falt_rev') or d.get('tcor_v') != TCOR_VERSIO)][:n]
     if not cua:
         return 0
     resultat = {}
     for d in cua:
         try:
             rel = DG.release(d['discogs_release'])
+            # l'edició amb els mateixos temes que la fitxa (nombre i títols), no la primera que es va trobar
+            if rel and not cancons_soltes('', d.get('titol', '')):
+                rel = millor_edicio([t[1] for t in d.get('temes') or [] if len(t) > 1], rel)
         except Exception as e:
             log(f'  Temes que falten: error {e!r}')
             break
@@ -2628,18 +3123,31 @@ def revisa_falten(n=150):
                  'nas_t': d.get('nas_t'), 'nas_t0': d.get('nas_t')}
             corregits = corregeix_temes(x, rel.get('temes'))
             falten = marca_falten(x, rel.get('temes')) if d.get('carpeta') else []
-            resultat[d['id']] = (falten, x.get('falt_rev'), x if corregits else None)
+            nova = rel if rel.get('id') != d['discogs_release'] else None
+            resultat[d['id']] = (falten, x.get('falt_rev'), x if corregits else None, nova)
     with comu.BLOC:
         discs = llegeix('discs.json', [])
         n_falten = 0
         for d in discs:
             if d.get('id') in resultat:
-                falten, data, x = resultat[d['id']]
-                d['tcor_rev'] = AVUI
+                falten, data, x, nova = resultat[d['id']]
+                d['tcor_rev'], d['tcor_v'] = AVUI, TCOR_VERSIO
+                if nova:
+                    # l'edició bona: enllaç, segell i edició posats pel programa (els teus camps, el número de
+                    # catàleg i el codi de barres no es toquen)
+                    d['discogs_release'] = nova['id']
+                    d['fonts'] = dict(d.get('fonts') or {}, Discogs=nova.get('url') or '')
+                    auto = set(d.get('auto') or [])
+                    for k, v in (('segell', nova.get('segell')), ('edicio', ' '.join(x_ for x_ in [nova.get('pais'), nova.get('any')] if x_))):
+                        if k in auto and v:
+                            d[k] = v
+                    d.pop('ver_rev', None)      # l'edició de la carpeta es tornarà a mirar amb l'edició bona
+                    d['revisar'] = True
                 if x and len(x['temes']) == len(d.get('temes') or []):
                     # només el títol dels temes corregits; la resta (estrelles que hagis posat mentrestant) es queda
                     for t, u in zip(d['temes'], x['temes']):
-                        if len(t) > 1 and len(u) > 1 and t[1] != u[1] and [t[1], u[1]] in x['temes_corregits']:
+                        if len(t) > 1 and len(u) > 1 and t[1] != u[1] \
+                                and any(list(c[:2]) == [t[1], u[1]] for c in x['temes_corregits']):
                             t[1] = u[1]
                     d['temes_corregits'] = (d.get('temes_corregits') or []) + x['temes_corregits']
                     if d.get('nas_t') == x['nas_t0']:
@@ -2699,6 +3207,7 @@ def detecta_versio(d, rel_actual=None):
         m = DG.api(f'/masters/{mid}') or {}
         original = str(m.get('year') or original or '')[:4]
         vers = DG.versions(mid)
+        n_rel = len((rel or {}).get('temes') or []) or len(meus)
         # primer, les edicions que encaixen amb el que diu la carpeta (any, segell, reedició); després, les més antigues
         def pista(v):
             p = 0
@@ -2709,8 +3218,10 @@ def detecta_versio(d, rel_actual=None):
                 p += 3
             if nota and _REED_DG.search(str(v.get('format') or '')):
                 p += 1
-            if re.search(r'\b(CD|File)\b', str(v.get('format') or '')):
+            if re.search(r'\b(CD|File)\b', f"{v.get('format') or ''} {' '.join(v.get('major_formats') or [])}"):
                 p += 1
+            if len(meus) > n_rel and re.search(r'Deluxe|Expanded|Box|Edition|Bonus', str(v.get('format') or ''), re.I):
+                p += 2          # la carpeta té més temes que l'edició principal: primer les edicions ampliades
             return p
         cands = sorted(vers, key=lambda v: (-pista(v), str(v.get('released') or '9999')))
         ids = [m.get('main_release')] + [v.get('id') for v in cands[:4]]
@@ -2723,7 +3234,7 @@ def detecta_versio(d, rel_actual=None):
             if not r or not r.get('temes'):
                 continue
             seus = [t['titol'] for t in r['temes']]
-            igual = comu.temes_coincidents(meus, seus)
+            igual = comu.temes_aparellats(meus, seus)       # un a un (21/11/2026)
             v = next((x for x in vers if x.get('id') == i), {})
             punts = igual - 0.5 * abs(len(seus) - len(meus)) + 0.3 * pista(v)
             if igual >= 0.6 * len(meus) and (not millor or punts > millor[0]):
@@ -2761,8 +3272,8 @@ def revisa_versions(n=100):
             resultat[d['id']] = detecta_versio(d)
         except Exception as e:
             log(f'  Edició: error {e!r} ({d.get("carpeta")})')
-            if 'HTTP 4' not in repr(e):
-                break
+            if 'HTTP 4' not in repr(e) or 'HTTP 429' in repr(e):
+                break           # sense internet o massa consultes seguides: es tornarà a mirar, no es dona per mirat
             resultat[d['id']] = None
     with comu.BLOC:
         discs = llegeix('discs.json', [])
@@ -3202,6 +3713,14 @@ def main():
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
         return
+    if a.mode == 'estils':
+        # només triar l'estil de cada disc per coincidència de fonts, una tanda de --n discos
+        try:
+            revisa_estils(a.n)
+            unifica_estils()
+        except Exception as e:
+            log(f'Estils per coincidència de fonts: error {e!r}')
+        return
     if a.mode == 'edicions':
         # només mirar quina edició és cada disc (reedicions), una tanda de --n discos
         try:
@@ -3229,6 +3748,14 @@ def main():
         unifica_variables()
     except Exception as e:
         log(f'Bitrate: error {e!r}')
+    try:
+        normalitza_numeros_tots()
+    except Exception as e:
+        log(f'Números de pista: error {e!r}')
+    try:
+        copia_estils_abans(llegeix('discs.json', []))     # abans que cap estil canviï per les fonts (un sol cop)
+    except Exception as e:
+        log(f'Estils: error fent la còpia {e!r}')
     try:
         # cada pas va per separat: si un falla (per exemple, sense internet), els altres es fan igualment
         for modes, pas, nom in ((('nit', 'nas'), llegeix_nas, 'NAS'), (('nit', 'discogs'), sincronitza_discogs, 'Discogs'),
@@ -3259,6 +3786,10 @@ def main():
                 revisa_versions(int(CFG.get('edicions_per_nit', 100) or 100))
             except Exception as e:
                 log(f'Edicions: error {e!r}')
+            try:
+                revisa_estils(int(CFG.get('estils_per_nit', 200) or 200))
+            except Exception as e:
+                log(f'Estils per coincidència de fonts: error {e!r}')
         try:
             arregla_noms_nas()
         except Exception as e:
