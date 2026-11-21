@@ -13,6 +13,7 @@ Regles: només omple camps buits, mai no toca la classificació personal ni les 
 i marca tot el que afegeix com a «automàtic» perquè ho puguis revisar.
 """
 import argparse, datetime, json, os, re, shutil, sys, time, unicodedata
+from collections import Counter
 from difflib import SequenceMatcher
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -2769,50 +2770,120 @@ def discs_diferents(d1, d2, al_nas):
 
 
 # notes d'edició que algunes edicions de Discogs posen als temes i que no són del títol («(2009 Remaster)»,
-# «- Remastered 2011», «(Bonus Track)»): no es copien a la fitxa
-_NOTA_EDICIO = re.compile(r'\s*[\(\[][^\(\)\[\]]*\b(?:re-?master\w*|reissue|deluxe|expanded|anniversary|bonus(?: track)?)\b[^\(\)\[\]]*[\)\]]'
+# «- Remastered 2011», «(Bonus Track)», «(Album Version)», que vol dir la de sempre): no es copien a la fitxa
+_NOTA_EDICIO = re.compile(r'\s*[\(\[][^\(\)\[\]]*\b(?:re-?master\w*|reissue|deluxe|expanded|anniversary|bonus(?: track)?|(?:album|lp) version)\b[^\(\)\[\]]*[\)\]]'
                           r'|\s+[-–]\s+(?:(?:19|20)\d{2}\s+)?(?:digital(?:ly)?\s+)?re-?master\w*(?:\s+(?:19|20)\d{2})?(?:\s+version)?\s*$', re.I)
 _CUA_PAR = re.compile(r'(?:\s*[\(\[][^\(\)\[\]]*[\)\]])+\s*$')
+_GRUP_PAR = re.compile(r'[\(\[][^\(\)\[\]]*[\)\]]')
+# cometes tipogràfiques i rectes, «…» i «...», claudàtors i parèntesis: per a la fitxa són el mateix
+_FORMA = str.maketrans({'’': "'", '‘': "'", '´': "'", '`': "'", '“': '"', '”': '"',
+                        '„': '"', '…': '...', '[': '(', ']': ')', '{': '(', '}': ')'})
+_RECTES = str.maketrans({'’': "'", '‘': "'", '´': "'", '“': '"', '”': '"', '„': '"'})
+
+
+def _forma(x):
+    """Com està escrit un títol, per comparar: cometes rectes, «...», claudàtors com parèntesis i «&» = «and»."""
+    return re.sub(r'\s*&\s*', ' and ', str(x or '').translate(_FORMA))
+
+
+def _treu_res(meu, seu):
+    """True si el títol de Discogs, amb les mateixes paraules, TREU alguna cosa del teu: un signe (apòstrof, coma,
+    punt, guionet, interrogant...), un article («A Million Miles» -> «Million Miles», «King Of The Kings» -> «King Of
+    Kings») o un accent. Discogs també té errades («Doin'» -> «Doin», «Don't» -> «Dont», «Rock-A-Roller» -> «Rock A
+    Roller»): llavors es queda el teu. Si només n'hi afegeix («Auto-Intoxication», «Makin' Sunshine», «Getting
+    Thru?»), no."""
+    a, b = _forma(meu), _forma(seu)
+    signes = lambda x: Counter(c for c in x if not c.isalnum() and not c.isspace())
+    articles = lambda x: Counter(w for w in re.findall(r'[a-z0-9]+', x.lower()) if w in ('the', 'a', 'an'))
+    accents = lambda x: sum(1 for c in unicodedata.normalize('NFD', x) if unicodedata.combining(c))
+    return bool(signes(a) - signes(b)) or bool(articles(a) - articles(b)) or accents(a) > accents(b)
+
+
+def _fusiona(meu, seu):
+    """Ajunta paraula per paraula el teu títol i el de Discogs (que s'assemblen): de cada paraula que és la mateixa es
+    queda la que no perd res (si Discogs hi treu un apòstrof, un signe o un accent, la teva; si n'hi afegeix, la seva);
+    les paraules amb una errada són les de Discogs («Don't Where» -> «Down Where»); el que Discogs hi afegeix
+    s'afegeix («Storm» -> «The Storm», «Impossible Jam» -> «Impossible / Jam»), i el que Discogs no porta (un article,
+    «(Bonus Track)») es queda. Si només canvien els espais, es queden els teus."""
+    a, b = meu.split(), seu.split()
+    k = lambda w: re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFD', _forma(w)).encode('ascii', 'ignore').decode().lower())
+    ka, kb = [k(w) for w in a], [k(w) for w in b]
+    signes = lambda x: Counter(c for c in _forma(x) if not c.isalnum() and not c.isspace())
+    out = []
+    for op, i1, i2, j1, j2 in SequenceMatcher(None, ka, kb, autojunk=False).get_opcodes():
+        A, B = a[i1:i2], b[j1:j2]
+        if op == 'equal':
+            for x, y in zip(A, B):
+                igual_forma = x.lower() != y.lower() and _forma(x).lower().strip() == _forma(y).lower().strip()  # «&»/«and», cometes
+                out.append(x if _treu_res(x, y) or igual_forma else y)
+        elif op == 'delete':
+            out += A                                    # Discogs no treu res del teu
+        elif op == 'insert':
+            out += B                                    # el que Discogs hi afegeix
+        elif ''.join(ka[i1:i2]) == ''.join(kb[j1:j2]):  # les mateixes lletres amb els espais o els signes canviats
+            sa, sb = ' '.join(A), ' '.join(B)
+            out += A if (_treu_res(sa, sb) or signes(sa) == signes(sb)) else B
+        else:
+            out += B                                    # una errada d'escriptura: la paraula de Discogs
+    return ' '.join(out)
 
 
 def titol_tema_bo(meu, seu):
     """El títol que ha de tenir a la fitxa un tema que s'ha aparellat amb un tema del disc de Discogs (norma general
     del 21/11/2026, «Postcards From A Young Man»), o None si s'ha de quedar com està:
-    - només canvien majúscules o espais: es queda com està;
+    - només canvien majúscules, espais, el tipus de cometes («’»/«'»), «…»/«...», claudàtors/parèntesis o
+      «&»/«and»: es queda com està;
     - números diferents («Part 1»/«Part 2»): es queda com està (són temes diferents);
-    - el mateix títol amb signes diferents («Auto Intoxication» -> «Auto-Intoxication», «It's Not War Just...» ->
-      «(It's Not War) Just...»): el de Discogs;
-    - el mateix títol però Discogs hi afegeix el que va entre parèntesis al final («The Descent» -> «The Descent
-      (Pages 1 & 2)», «Hazelton Avenue» -> «Hazelton Avenue (Original Demo)»): el de Discogs; si el parèntesi és teu i
-      Discogs no el porta («(Bonus Track)»), o tots dos en porten un de diferent, es queda com està;
+    - el mateix títol amb signes diferents: el de Discogs si n'hi afegeix («Auto Intoxication» -> «Auto-Intoxication»,
+      «It's Not War Just...» -> «(It's Not War) Just...»), el teu si Discogs en treu («Doin'» -> «Doin») o hi treu un
+      article («A Million Miles» -> «Million Miles»);
+    - Discogs hi afegeix el que va entre parèntesis al final («The Descent» -> «The Descent (Pages 1 & 2)»,
+      «Hazelton Avenue» -> «Hazelton Avenue (Original Demo)»): s'hi afegeix; si el parèntesi és teu i Discogs no el
+      porta («(Bonus Track)»), es queda; si tots dos en porten un de diferent, no es toca;
     - una errada d'escriptura (85 % de semblança: «Hazleton» -> «Hazelton», «Wister Time» -> «Wiser Time»): el de
       Discogs, mantenint el teu parèntesi del final si Discogs no en porta.
-    Les notes d'edició de Discogs («(2009 Remaster)», «(Bonus Track)») no es copien mai."""
-    seu = re.sub(r'\s+', ' ', _NOTA_EDICIO.sub('', str(seu or ''))).strip()
+    Les notes d'edició de Discogs («(2009 Remaster)», «(Bonus Track)», «(Album Version)») no es copien mai, i les
+    cometes tipogràfiques de Discogs passen a rectes, com a la resta de la fitxa."""
+    seu = re.sub(r'\s+', ' ', _NOTA_EDICIO.sub('', str(seu or ''))).strip().translate(_RECTES)
+    m = re.fullmatch(r'"([^"]+)"', seu)          # tot el títol entre cometes («"I Ain't Got No"»)
+    if m:
+        seu = m.group(1).strip()
     meu = str(meu or '')
     if not seu or not NT(seu):
         return None
-    if re.sub(r'\s+', '', meu.lower()) == re.sub(r'\s+', '', seu.lower()):
+    igual = lambda x: re.sub(r'\s+', '', _forma(x).lower())
+    if igual(meu) == igual(seu):
         return None
     xifres = lambda x: re.findall(r'\d+', comu.TF(x))       # del títol, no del parèntesi del final («(Pages 1 & 2)»)
     if xifres(meu) != xifres(seu):
         return None
+    if NT(meu) == NT(seu):                      # les mateixes paraules: només canvien signes, articles o majúscules
+        nou = _fusiona(meu, seu)
+        return None if igual(nou) == igual(meu) else nou
     cua_meu, cua_seu = _CUA_PAR.search(meu), _CUA_PAR.search(seu)
-    if NT(meu) == NT(seu):
-        return seu
-    if comu.TF(meu) == comu.TF(seu):
-        if cua_seu and not cua_meu:
-            return seu
+    base_meu = meu[:cua_meu.start()] if cua_meu else meu
+    base_seu = seu[:cua_seu.start()] if cua_seu else seu
+    cm, cs = (cua_meu.group(0) if cua_meu else ''), (cua_seu.group(0) if cua_seu else '')
+    # 1. el títol sense el parèntesi del final: el mateix (signes) o una errada d'escriptura
+    if NT(base_meu) == NT(base_seu) or (len(NT(base_meu)) >= 4
+                                         and SequenceMatcher(None, comu.TF(meu), comu.TF(seu)).ratio() >= 0.85):
+        base = _fusiona(base_meu, base_seu)
+    else:
         return None
-    if len(NT(meu)) < 4:
-        return None
-    if SequenceMatcher(None, comu.TF(meu), comu.TF(seu)).ratio() >= 0.85:
-        if cua_meu and not cua_seu:
-            return seu + cua_meu.group(0)
-        if cua_meu and cua_seu and comu.TF(cua_meu.group(0)) != comu.TF(cua_seu.group(0)):
-            return None
-        return seu
-    return None
+    # 2. el parèntesi del final
+    if not cs or not cm:
+        cua = cm or cs                          # el teu es queda; si no en tens, el de Discogs
+    else:
+        g_meu = [NT(g) for g in _GRUP_PAR.findall(cm)]
+        g_seu = [NT(g) for g in _GRUP_PAR.findall(cs)]
+        if g_meu == g_seu:                      # el mateix parèntesi escrit diferent
+            cua = _fusiona(cm.strip(), cs.strip())
+        elif set(g_meu) <= set(g_seu):          # Discogs hi posa més informació
+            cua = cs
+        else:
+            return None                         # parèntesis diferents: no es toca
+    nou = (base.strip() + ' ' + cua.strip()).strip()
+    return None if igual(nou) == igual(meu) else nou
 
 
 def corregeix_temes(d, temes_dg):
