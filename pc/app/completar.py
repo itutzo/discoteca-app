@@ -3753,6 +3753,10 @@ def main():
     except Exception as e:
         log(f'Números de pista: error {e!r}')
     try:
+        copia_estils_abans(llegeix('discs.json', []))     # abans que cap estil canviï per les fonts (un sol cop)
+    except Exception as e:
+        log(f'Estils: error fent la còpia {e!r}')
+    try:
         # cada pas va per separat: si un falla (per exemple, sense internet), els altres es fan igualment
         for modes, pas, nom in ((('nit', 'nas'), llegeix_nas, 'NAS'), (('nit', 'discogs'), sincronitza_discogs, 'Discogs'),
                                 (('nit', 'nas', 'duplicats'), elimina_duplicats, 'Duplicats')):
