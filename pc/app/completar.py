@@ -1381,18 +1381,30 @@ def completa(d, artistes, estils_meus):
     # els mateixos temes que la fitxa o la carpeta, es busca la que hi encaixa entre les altres edicions del disc
     if dg and not cancons_soltes(nom_art, titol):
         try:
-            dg = millor_edicio([t[1] for t in d.get('temes', []) if len(t) > 1] or temes_nets or temes_crus, dg)
+            dg = millor_edicio(temes_nets or temes_crus, dg)
         except Exception as e:
             log(f'  Discogs (edició amb els mateixos temes): error {e!r}')
     if dg and d.get('discogs_release') and d['discogs_release'] != dg['id']:
-        # una altra edició: les dades d'edició que havia posat el programa amb l'edició d'abans es tornen a omplir
-        # amb la bona (segell, edició, número de catàleg i codi de barres; els teus camps no es toquen)
-        refets = [k for k in ('segell', 'edicio', 'catno', 'barcode') if k in auto and d.get(k)]
-        for k in refets:
-            d.pop(k, None)
-            auto.discard(k)
-        if refets:
-            canvis.append('edicio')
+        # l'edició que ja tenia la fitxa es queda si hi encaixa igual de bé (pot ser la del teu CD de la col·lecció);
+        # si la nova hi encaixa millor, les dades d'edició que havia posat el programa (segell i edició) es tornen a
+        # omplir amb la bona. Els teus camps, i el número de catàleg i el codi de barres, no es toquen.
+        meus_e = temes_nets or temes_crus
+        try:
+            vella = DG.release(d['discogs_release'])
+        except Exception as e:
+            log(f'  Discogs (edició de la fitxa): error {e!r}')
+            vella = None
+        pv = punts_edicio(meus_e, vella) if vella and vella.get('temes') else None
+        if pv and len([t for t in meus_e if NT(t)]) >= 3 and pv[1] >= TEMES_ENCAIXA * len([t for t in meus_e if NT(t)]) \
+                and pv >= punts_edicio(meus_e, dg):
+            if dg.get('master') and not vella.get('master'):
+                vella['master'] = dg['master']
+            dg = vella
+        else:
+            for k in ('segell', 'edicio'):      # omple() les torna a posar amb l'edició bona
+                if k in auto and d.get(k):
+                    d.pop(k, None)
+                    auto.discard(k)
     if dg:
         if not nom_art and dg.get('artista'):
             d['artista'] = id_artista(dg['artista'], artistes)
@@ -2650,7 +2662,7 @@ def normalitza_numeros(temes):
     parts = []
     for t in temes:
         n = str(t[0] if t else '').strip()
-        m = re.match(r'^(?:(?:CD|Disc)\s*)?(\d{1,2})\s*[-./]\s*(\d{1,3})$', n, re.I) or re.match(r'^([1-9])(\d{2})$', n)
+        m = re.match(r'^(?:(?:CD|Disc)\s*)?(\d{1,2})\s*[-.]\s*(\d{1,3})$', n, re.I) or re.match(r'^([1-9])(\d{2})$', n)
         if not m or int(m.group(2)) < 1:
             return False
         parts.append((int(m.group(1)), int(m.group(2))))
@@ -2690,6 +2702,15 @@ def normalitza_numeros_tots():
     return len(fets)
 
 
+def punts_edicio(meus, r):
+    """Com encaixa una edició de Discogs amb els temes de la fitxa: (temes aparellats un a un menys mig punt per cada
+    tema de diferència en el nombre, temes aparellats). Com més alt, millor."""
+    meus = [t for t in meus or [] if NT(t)]
+    s = [t['titol'] for t in (r or {}).get('temes') or [] if NT(t.get('titol'))]
+    ig = comu.temes_aparellats(meus, s)
+    return (ig - 0.5 * abs(len(s) - len(meus)), ig)
+
+
 def millor_edicio(meus, rel, max_prova=6):
     """Norma prioritària de l'Ignasi (14/11 i 21/11/2026): l'edició de Discogs d'un disc es tria pel NOMBRE de temes i
     pels seus TÍTOLS, no pel nom. Si l'edició trobada no té els mateixos temes que la fitxa (la carpeta té el disc
@@ -2701,12 +2722,7 @@ def millor_edicio(meus, rel, max_prova=6):
     meus = [t for t in meus or [] if NT(t)]
     if not rel or len(meus) < 3:
         return rel
-
-    def punts(r):
-        s = [t['titol'] for t in r.get('temes') or [] if NT(t.get('titol'))]
-        ig = comu.temes_aparellats(meus, s)
-        return (ig - 0.5 * abs(len(s) - len(meus)), ig)
-
+    punts = lambda r: punts_edicio(meus, r)
     p0 = punts(rel)
     n_seus = len([t for t in rel.get('temes') or [] if NT(t.get('titol'))])
     if n_seus == len(meus) and p0[1] == len(meus):
@@ -2804,18 +2820,14 @@ def revisa_falten(n=150):
                 falten, data, x, nova = resultat[d['id']]
                 d['tcor_rev'], d['tcor_v'] = AVUI, TCOR_VERSIO
                 if nova:
-                    # l'edició bona: enllaç i dades d'edició posades pel programa (els teus camps no es toquen)
+                    # l'edició bona: enllaç, segell i edició posats pel programa (els teus camps, el número de
+                    # catàleg i el codi de barres no es toquen)
                     d['discogs_release'] = nova['id']
                     d['fonts'] = dict(d.get('fonts') or {}, Discogs=nova.get('url') or '')
                     auto = set(d.get('auto') or [])
-                    for k, v in (('segell', nova.get('segell')), ('edicio', ' '.join(x_ for x_ in [nova.get('pais'), nova.get('any')] if x_)),
-                                 ('catno', nova.get('catno')), ('barcode', nova.get('barcode'))):
-                        if k in auto and v and (k in ('segell', 'edicio') or any(s_ in suports(d) for s_ in ('cd', 'lp'))):
+                    for k, v in (('segell', nova.get('segell')), ('edicio', ' '.join(x_ for x_ in [nova.get('pais'), nova.get('any')] if x_))):
+                        if k in auto and v:
                             d[k] = v
-                        elif k in auto and k in ('catno', 'barcode'):
-                            d.pop(k, None)
-                            auto.discard(k)
-                    d['auto'] = sorted(auto)
                     d.pop('ver_rev', None)      # l'edició de la carpeta es tornarà a mirar amb l'edició bona
                     d['revisar'] = True
                 if x and len(x['temes']) == len(d.get('temes') or []):
