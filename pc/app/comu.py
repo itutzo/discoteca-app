@@ -526,6 +526,13 @@ def TT(s):
     return NT(sense) or NT(s)
 
 
+def TF(s):
+    """Clau d'un tema sense el que va entre parèntesis AL FINAL («(It's Not War) Just The End Of Love (Original Demo)»
+    = «It's Not War Just The End Of Love»): el parèntesi del principi sí que és del títol (21/11/2026)."""
+    sense = re.sub(r'(?:\s*[\(\[][^\(\)\[\]]*[\)\]])+\s*$', '', str(s or ''))
+    return NT(sense) or NT(s)
+
+
 def tema_igual(a, b):
     """Dos títols de tema són el mateix tema: iguals o molt semblants (85 %), també sense el que va entre parèntesis."""
     na, nb = NT(a), NT(b)
@@ -541,6 +548,40 @@ def temes_coincidents(meus, seus):
     """Quants temes de `meus` són a `seus` (títols tal com vénen, sense normalitzar)."""
     seus = [u for u in seus or [] if NT(u)]
     return sum(1 for t in meus or [] if NT(t) and any(tema_igual(t, u) for u in seus))
+
+
+def aparella_temes(meus, seus):
+    """Norma de l'Ignasi (21/11/2026, «Postcards From A Young Man»): cada tema de la fitxa es compara amb UN sol tema
+    del disc de Discogs, i cada tema de Discogs només pot ser d'un tema de la fitxa. Abans, en un disc doble amb els
+    mateixos temes a cada CD (disc + maquetes), els 24 temes de la fitxa «encaixaven» amb els 12 d'un CD senzill.
+    Torna {índex a `meus`: índex a `seus`}. Primer els del mateix títol (també sense el que va entre parèntesis), el de
+    la posició més pròxima abans; després els molt semblants (`tema_igual`), el més semblant abans."""
+    meus, seus = list(meus or []), list(seus or [])
+    nm, ns = [NT(t) for t in meus], [NT(u) for u in seus]
+    tm, ts = [TT(t) for t in meus], [TT(u) for u in seus]
+    fm, fs = [TF(t) for t in meus], [TF(u) for u in seus]
+    parells = []
+    for i, t in enumerate(meus):
+        if not nm[i]:
+            continue
+        for j, u in enumerate(seus):
+            if not ns[j]:
+                continue
+            if nm[i] == ns[j] or fm[i] == fs[j] or (len(tm[i]) >= 3 and tm[i] == ts[j]):
+                parells.append((0, abs(i - j), 0, i, j))      # el mateix títol: mana la posició
+            elif tema_igual(t, u):
+                parells.append((1, -SequenceMatcher(None, tm[i], ts[j]).ratio(), abs(i - j), i, j))
+    out, presos = {}, set()
+    for *_, i, j in sorted(parells):
+        if i not in out and j not in presos:
+            out[i] = j
+            presos.add(j)
+    return out
+
+
+def temes_aparellats(meus, seus):
+    """Quants temes de `meus` tenen parella a `seus`, un a un (`aparella_temes`)."""
+    return len(aparella_temes(meus, seus))
 
 
 def marca_reanomena(abans, d):
