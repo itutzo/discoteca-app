@@ -1455,6 +1455,17 @@ def completa(d, artistes, estils_meus):
             (dg_.get('estils') or [None])[0] or ' '.join(w.capitalize() for w in (mb_.get('generes') or [''])[0].split()) or None
         omple('estil', est)
 
+    # 2c. L'estil que diuen més fonts (norma del 21/11/2026), un sol cop per disc (EST_VERSIO)
+    if (dg or mb) and d.get('est_v') != EST_VERSIO and not cancons_soltes(nom_art, titol):
+        try:
+            d['auto'] = sorted(auto)            # vots_estil() mira si l'estil l'havia posat el programa
+            vots = fonts_estil(d, nom_art, dg or {}, mb or {})
+            nou, detall = decideix_estil(d, vots, estils_vocabulari(), estils_meus)
+            if aplica_estil(d, nou, detall, auto):
+                canvis.append('estil')
+        except Exception as e:
+            log(f'  Estil per coincidència de fonts: error {e!r}')
+
     # 3. Temes: conservem els teus noms i hi afegim el compositor
     ref = (am or {}).get('temes') or (dg or {}).get('temes') or (mb or {}).get('temes') or []
     ref_dg = (dg or {}).get('temes') or []
@@ -2101,6 +2112,201 @@ def unifica_estils():
             for (camp, v, b), k in sorted(canvis.items()):
                 log(f'  {camp.capitalize()}: «{v}» → «{b}» ({k})')
             log(f'Estils: {n} estils i gèneres escrits diferent unificats')
+
+
+# ------------------------------------------------------------------ l'estil que diuen més fonts (21/11/2026)
+# Norma de l'Ignasi: l'estil de cada disc és el que té més coincidències entre les fonts: AllMusic (el que ja hi ha a la
+# fitxa, que ve de l'Access o d'AllMusic), Discogs, MusicBrainz, la Wikipedia (gèneres de Wikidata del disc que enllaça
+# MusicBrainz) i Last.fm. No el de la primera font que es va trobar. Els noms escrits diferent ja s'ajunten a part
+# (unifica_estils); aquí es tria QUIN estil és.
+EST_VERSIO = 1          # quan canvia la manera de triar, es puja i tots els discos es tornen a mirar
+# els gèneres amplis no són estils: mai guanyen, i un estil així a la fitxa («Rock») no es defensa amb els vots del
+# gènere (MusicBrainz i Last.fm hi posen gairebé sempre «rock»)
+ESTILS_AMPLIS = {'rock', 'pop', 'jazz', 'blues', 'electronic', 'electronica', 'folk', 'country', 'metal', 'punk',
+                 'alternative', 'indie', 'soul', 'funk', 'reggae', 'classical', 'hiphop', 'rap', 'randb', 'rb',
+                 'world', 'latin', 'music', 'instrumental', 'vocal', 'acoustic'}
+_E_VOCAB = []
+
+
+def estils_vocabulari(discs=None):
+    """El vocabulari d'estils (etiquetes de Last.fm desades i paraules dels estils de la discoteca), un sol cop."""
+    if not _E_VOCAB:
+        meus = {}
+        for d in discs if discs is not None else llegeix('discs.json', []):
+            for w in set(re.findall(r'[a-z0-9]+', comu._sense_accents(d.get('estil') or '').lower())):
+                meus[w] = meus.get(w, 0) + 1
+        _E_VOCAB.append(comu.Estils(llegeix('lastfm.json', {}), meus))
+    return _E_VOCAB[0]
+
+
+def estils_de_la_discoteca(discs):
+    out = {}
+    for d in discs:
+        if d.get('estil'):
+            out.setdefault(N(d['estil']), d['estil'])
+            out.setdefault(comu.clau_estil(d['estil']), d['estil'])
+    return out
+
+
+def vots_estil(d, dg=None, mb=None, wd=None, lf=None):
+    """Els estils que dona cada font per a aquest disc: {font: [estils]}. L'estil que ja hi ha a la fitxa compta com a
+    vot d'AllMusic/Access si no l'havia posat el programa (o d'AllMusic si el va posar amb AllMusic); si el va posar el
+    programa amb Discogs o MusicBrainz, ja compta com a vot d'aquella font i no es compta dues vegades."""
+    v = {}
+    if d.get('estil'):
+        if 'estil' not in (d.get('auto') or []):
+            v['AllMusic/Access'] = [d['estil']]
+        elif (d.get('fonts') or {}).get('AllMusic'):
+            v['AllMusic'] = [d['estil']]
+    if dg and dg.get('estils'):
+        v['Discogs'] = list(dg['estils'])
+    if mb and mb.get('generes'):
+        v['MusicBrainz'] = list(mb['generes'])
+    if wd:
+        v['Wikipedia'] = list(wd)
+    if lf:
+        v['Last.fm'] = list(lf)[:10]
+    return v
+
+
+def decideix_estil(d, vots, E=None, estils_meus=None):
+    """Quin estil ha de tenir el disc segons les fonts. Torna (estil nou o None si es queda el que hi ha, {estil: [fonts]}).
+    - cada font vota una vegada cada estil que dona (escrit de qualsevol manera: «Alternative Rock» = «alternative rock»);
+    - Last.fm només confirma estils que dona una altra font (les seves etiquetes porten soroll: «welsh», «2010»);
+    - guanya l'estil amb més fonts, si n'hi ha com a mínim 2; a igualtat, el que ja hi ha a la fitxa i després el de
+      Discogs; els gèneres amplis («Rock», «Pop», «Jazz»…) no guanyen mai;
+    - l'estil de la fitxa només es canvia si un altre té MÉS fonts (o si a la fitxa hi ha un gènere ampli)."""
+    E = E or estils_vocabulari()
+    estils_meus = estils_meus or {}
+    clau = lambda x: comu.clau_estil(x, E)
+    k_gen = clau(d.get('genere')) if d.get('genere') else ''
+    ampli = lambda k: k in ESTILS_AMPLIS or k == k_gen
+    per_k, nom, ordre = {}, {}, {}
+    for font, llista in vots.items():
+        if font == 'Last.fm':
+            continue
+        for x in llista:
+            k = clau(x)
+            if not k:
+                continue
+            per_k.setdefault(k, set()).add(font)
+            ordre.setdefault(k, len(ordre))
+            if k not in nom or (font == 'Discogs' and nom[k][1] != 'Discogs'):
+                nom[k] = (x, font)
+    for x in vots.get('Last.fm') or []:
+        k = clau(x)
+        if k in per_k:
+            per_k[k].add('Last.fm')
+    nom_bo = lambda k: estils_meus.get(k) or (nom[k][0] if nom[k][1] in ('Discogs', 'AllMusic', 'AllMusic/Access')
+                                               else comu._titol_estil(nom[k][0]))
+    detall = {nom_bo(k): sorted(f) for k, f in sorted(per_k.items(), key=lambda kv: (-len(kv[1]), ordre[kv[0]]))[:6]}
+    actual = d.get('estil') or ''
+    k_act = clau(actual) if actual else ''
+    cands = [k for k in per_k if not ampli(k)]
+    if not cands:
+        return None, detall
+    millor = max(cands, key=lambda k: (len(per_k[k]), k == k_act, 'Discogs' in per_k[k], -ordre[k]))
+    if len(per_k[millor]) < 2 or millor == k_act:
+        return None, detall
+    if actual and not ampli(k_act) and len(per_k.get(k_act, ())) >= len(per_k[millor]):
+        return None, detall
+    return nom_bo(millor), detall
+
+
+def aplica_estil(d, nou, detall, auto=None):
+    """Desa la decisió: l'estil nou (si n'hi ha), el d'abans a `estil_abans` (el primer cop) i les fonts de cada estil
+    a `est_fonts`. Torna True si ha canviat l'estil."""
+    d['est_v'], d['est_rev'] = EST_VERSIO, AVUI
+    if detall:
+        d['est_fonts'] = detall
+    if not nou or nou == d.get('estil'):
+        return False
+    vell = d.get('estil') or ''
+    d.setdefault('estil_abans', vell)
+    d['estil'] = nou
+    if auto is not None:
+        auto.add('estil')
+    else:
+        d['auto'] = sorted(set(d.get('auto') or []) | {'estil'})
+    fonts_nou = ', '.join((detall or {}).get(nou) or [])
+    log(f"  Estil de «{d.get('titol', '')}»: «{vell}» -> «{nou}» ({fonts_nou})")
+    try:
+        with open(os.path.join(comu.DADES, 'estils_canviats.txt'), 'a', encoding='utf-8') as f:
+            f.write(f"{AVUI}\t{d.get('id')}\t{d.get('titol', '')}\t{vell}\t{nou}\t{fonts_nou}\n")
+    except OSError:
+        pass
+    return True
+
+
+def copia_estils_abans(discs):
+    """El primer cop, una còpia de l'estil de cada disc abans de triar-lo per les fonts (per poder-ho desfer)."""
+    fetes = llegeix('migracions.json', {})
+    if fetes.get('estils_consens'):
+        return
+    copia = os.path.join(comu.COPIES, 'estils-consens-abans.json')
+    if not os.path.exists(copia):
+        with open(copia, 'w', encoding='utf-8') as f:
+            json.dump({str(d.get('id')): d.get('estil') or '' for d in discs}, f, ensure_ascii=False)
+    fetes['estils_consens'] = AVUI
+    desa('migracions.json', fetes)
+
+
+def fonts_estil(d, nom_art, dg=None, mb=None):
+    """Recull el que diuen les fonts de l'estil d'un disc. `dg`/`mb`: el que ja s'ha consultat (completa); si no, el
+    disc de Discogs de la fitxa i el de MusicBrainz que ja té enllaçat. Torna els vots ({font: [estils]})."""
+    if dg is None and d.get('discogs_release'):
+        dg = DG.release(d['discogs_release'])
+    if mb is None:
+        m = re.search(r'/release-group/([0-9a-f-]{36})', str((d.get('fonts') or {}).get('MusicBrainz') or ''))
+        mb = fonts.mb_grup(m.group(1)) if m else None
+    wd = []
+    try:
+        wd = fonts.wikidata_generes((mb or {}).get('wikidata'))
+    except Exception as e:
+        log(f'  Wikidata: error {e!r}')
+    lf = []
+    try:
+        lf = fonts.lastfm_etiquetes_disc(nom_cerca(nom_art), d.get('titol', ''), LFM) if nom_art and d.get('titol') else []
+    except Exception as e:
+        log(f'  Last.fm (etiquetes del disc): error {e!r}')
+    return vots_estil(d, dg, mb, wd, lf)
+
+
+def revisa_estils(n=200):
+    """Cada nit, una tanda de discos: l'estil que diuen més fonts (`decideix_estil()`). Unes 4 consultes per disc
+    (Discogs, que sol ser a la memòria de la mateixa nit, MusicBrainz, Wikidata i Last.fm). Si mentrestant has canviat
+    l'estil d'un disc, es respecta. Un cop mirat (`est_v`), el disc no es torna a mirar fins que canviï la manera de
+    triar (EST_VERSIO), així que si després el canvies a mà, es queda el teu."""
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+    artistes = llegeix('artistes.json', {})
+    copia_estils_abans(discs)
+    cua = [d for d in discs if d.get('est_v') != EST_VERSIO
+           and (d.get('discogs_release') or (d.get('fonts') or {}).get('MusicBrainz'))
+           and not cancons_soltes(artistes.get(str(d.get('artista')), ''), d.get('titol', ''))][:n]
+    if not cua:
+        return 0
+    E, estils_meus = estils_vocabulari(discs), estils_de_la_discoteca(discs)
+    resultat = {}
+    for d in cua:
+        try:
+            vots = fonts_estil(d, artistes.get(str(d.get('artista')), ''))
+        except Exception as e:
+            log(f'  Estils: error {e!r} («{d.get("titol", "")}»); la resta es mirarà un altre dia')
+            break
+        resultat[d['id']] = (d.get('estil'), *decideix_estil(d, vots, E, estils_meus))
+    canviats = 0
+    with comu.BLOC:
+        discs = llegeix('discs.json', [])
+        for d in discs:
+            if d.get('id') in resultat:
+                abans, nou, detall = resultat[d['id']]
+                if d.get('estil') != abans:
+                    continue                # l'has canviat mentrestant: mana el teu
+                canviats += aplica_estil(d, nou, detall)
+        desa('discs.json', discs)
+    log(f'Estils per coincidència de fonts: {len(resultat)} discos mirats, {canviats} canviats')
+    return len(resultat)
 
 
 def tanda(mode, n, id_=None):
@@ -3399,6 +3605,14 @@ def main():
         except Exception as e:
             log(f'NAS: error reanomenant carpetes {e!r}')
         return
+    if a.mode == 'estils':
+        # només triar l'estil de cada disc per coincidència de fonts, una tanda de --n discos
+        try:
+            revisa_estils(a.n)
+            unifica_estils()
+        except Exception as e:
+            log(f'Estils per coincidència de fonts: error {e!r}')
+        return
     if a.mode == 'edicions':
         # només mirar quina edició és cada disc (reedicions), una tanda de --n discos
         try:
@@ -3460,6 +3674,10 @@ def main():
                 revisa_versions(int(CFG.get('edicions_per_nit', 100) or 100))
             except Exception as e:
                 log(f'Edicions: error {e!r}')
+            try:
+                revisa_estils(int(CFG.get('estils_per_nit', 200) or 200))
+            except Exception as e:
+                log(f'Estils per coincidència de fonts: error {e!r}')
         try:
             arregla_noms_nas()
         except Exception as e:
