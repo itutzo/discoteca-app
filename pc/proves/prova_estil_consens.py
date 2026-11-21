@@ -40,16 +40,24 @@ for i, d in enumerate(mostra):
     nom = f"{artistes.get(str(d.get('artista')), '?')} - {d.get('titol')} ({d['id']})"
     print(f'{i + 1}/{len(mostra)} {nom}', flush=True)
     try:
-        vots = C.fonts_estil(copy.deepcopy(d), artistes.get(str(d.get('artista')), ''))
+        nota = ''
+        try:
+            vots = C.fonts_estil(copy.deepcopy(d), artistes.get(str(d.get('artista')), ''))
+        except Exception as e:
+            # MusicBrainz caigut (HTTP 503): la prova continua sense MusicBrainz (ni Wikipedia, que en depèn) i ho diu;
+            # a la tanda de nit el disc es deixaria per a un altre dia
+            nota = f'sense MusicBrainz ({e!r})'
+            vots = C.fonts_estil(copy.deepcopy(d), artistes.get(str(d.get('artista')), ''), None, {})
         nou, detall = C.decideix_estil(d, vots, E, meus)
-        out[str(d['id'])] = {'nom': nom, 'estil': d.get('estil'), 'nou': nou, 'fonts': detall, 'vots': vots}
+        out[str(d['id'])] = {'nom': nom, 'estil': d.get('estil'), 'nou': nou, 'fonts': detall, 'vots': vots, 'nota': nota}
         if nou:
             canvis[(d.get('estil'), nou)] += 1
     except Exception as e:
         out[str(d['id'])] = {'nom': nom, 'error': repr(e)}
 json.dump(out, open(SORTIDA, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 n_canvi = sum(1 for v in out.values() if v.get('nou'))
-print(f"\n{len(out)} discos mirats · {n_canvi} canviarien d'estil · {sum(1 for v in out.values() if v.get('error'))} errors")
+print(f"\n{len(out)} discos mirats · {n_canvi} canviarien d'estil · {sum(1 for v in out.values() if v.get('error'))} errors"
+      f" · {sum(1 for v in out.values() if v.get('nota'))} sense MusicBrainz (no responia)")
 print('\nCanvis (estil d\'ara -> estil nou: discos):')
 for (a, b), n in canvis.most_common():
     print(f'  {a} -> {b}: {n}')
