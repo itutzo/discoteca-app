@@ -294,8 +294,34 @@ def formata_arxius(d, arrel):
     if not m or not os.path.isdir(ruta):
         return 0
     art, tit = comu.art_arxius(m.group(1).strip()), m.group(3).strip()     # arxius: «The Fumes - ...» (14/11/2026)
-    discs = {N(t[1]): int(t[3][2:]) for t in d.get('temes') or []
-             if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])}
+    # temes mal escrits que la fitxa ja ha corregit amb Discogs («Wister Time» -> «Wiser Time», 14/11/2026). Als discos
+    # dobles la correcció porta el CD, perquè el mateix tema pot tenir un nom bo diferent a cada CD («The Descent» ->
+    # «The Descent (Pages 1 & 2)» al CD 1 i «… (Original Demo)» al CD 2, «Postcards From A Young Man», 21/11/2026)
+    bons_cd, bons, dubte, vells = {}, {}, set(), []
+    for c_ in d.get('temes_corregits') or []:
+        ka, nb = N(c_[0]), majuscules(nom_carpeta(c_[1]))
+        if not ka or not nb:
+            continue
+        if len(c_) > 2 and re.match(r'^CD\d+$', str(c_[2])):
+            bons_cd[(int(str(c_[2])[2:]), ka)] = nb
+            vells.append((ka, int(str(c_[2])[2:])))
+            continue
+        if bons.get(ka, nb) != nb:
+            dubte.add(ka)
+        bons[ka] = nb
+    for ka in dubte:
+        bons.pop(ka)
+    # de quin CD és cada tema segons la fitxa (també amb el nom d'abans de corregir-lo); un títol que surt a més d'un
+    # CD (el disc i les maquetes) no diu de quin CD és l'arxiu
+    discs, dubte = {}, set()
+    temes_cd = [(N(t[1]), int(str(t[3])[2:])) for t in d.get('temes') or []
+                if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) and N(t[1])]
+    for k_, v_ in temes_cd + vells:
+        if discs.get(k_, v_) != v_:
+            dubte.add(k_)
+        discs[k_] = v_
+    for k_ in dubte:
+        discs.pop(k_)
     canviats = errors = 0
     for root, _, files in os.walk(ruta):
         sub = os.path.relpath(root, ruta)
@@ -308,16 +334,26 @@ def formata_arxius(d, arrel):
             nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
                       tria=lambda c: cans.append(c) or c)
         neta = dict(zip(cans, [majuscules(x) for x in comu.neteja_titols_temes(cans, art, tit, numeros=False)]))
-        # temes mal escrits que la fitxa ja ha corregit amb Discogs («Wister Time» -> «Wiser Time», 14/11/2026)
-        bons = {N(a): majuscules(nom_carpeta(b)) for a, b in d.get('temes_corregits') or [] if N(a) and nom_carpeta(b)}
-        if bons:
-            neta = {c: bons.get(N(v), v) for c, v in neta.items()}
-        nous = {f: nom_arxiu(art, tit, os.path.splitext(f)[0], int(mc.group(1)) if mc else None, discs,
-                             tria=lambda c: neta.get(c, c)) for f in musica}
+
+        def nom_bo(f, cdc=int(mc.group(1)) if mc else None):
+            base, net = os.path.splitext(f)[0], []
+            x = nom_arxiu(art, tit, base, cdc, discs, tria=lambda c: net.append(neta.get(c, c)) or net[-1])
+            if not x or not net:
+                return x
+            k_ = N(net[-1])
+            bo = (bons_cd.get((x[0][0], k_)) if x[0][0] else None) or bons.get(k_)   # el nom bo, al CD de l'arxiu
+            if bo and bo != net[-1]:
+                x = nom_arxiu(art, tit, base, x[0][0] or cdc, discs, tria=lambda c: bo)
+            return x
+        nous = {f: nom_bo(f) for f in musica}
         # el mateix tema en dos formats («01 - Try.flac» i «01 - Try.mp3», Thelonious Monster) no és cap conflicte
         claus = [(x[0], os.path.splitext(f)[1].lower()) for f, x in nous.items() if x]
         # dos arxius del mateix format amb el mateix CD i número (no se sap de quin CD és cadascun): no es toca res
         if len(claus) != len(set(claus)):
+            continue
+        # en un disc doble, uns arxius saben de quin CD són i uns altres no: no es toca res (21/11/2026)
+        cds = {x[0][0] for x in nous.values() if x}
+        if discs and 0 in cds and len(cds) > 1:
             continue
         for f, x in nous.items():
             if not x:
@@ -2910,7 +2946,8 @@ def corregeix_temes(d, temes_dg):
         t = temes[idx[k]]
         nou = titol_tema_bo(t[1], seus[j])
         if nou and nou != t[1]:
-            fets.append([t[1], nou])
+            # amb el CD del tema, perquè als discos dobles el mateix tema pot tenir un nom bo diferent a cada CD
+            fets.append([t[1], nou] + ([str(t[3])] if len(t) > 3 and re.match(r'^CD\d+$', str(t[3])) else []))
             t[1] = nou
     if not fets:
         return 0
@@ -2918,11 +2955,11 @@ def corregeix_temes(d, temes_dg):
     if d.get('nas_t') == firma_abans:
         d['nas_t'] = firma_temes(temes)
     d.pop('fmt_m', None)        # els arxius es tornaran a anomenar amb el nom bo
-    log(f"  Temes corregits amb Discogs a «{d.get('titol', '')}»: " + ', '.join(f'«{a}» -> «{b}»' for a, b in fets[:5])
+    log(f"  Temes corregits amb Discogs a «{d.get('titol', '')}»: " + ', '.join(f'«{a}» -> «{b}»' for a, b, *_ in fets[:5])
         + (f' i {len(fets) - 5} més' if len(fets) > 5 else ''))
     try:
         with open(os.path.join(comu.DADES, 'titols_corregits.txt'), 'a', encoding='utf-8') as f:
-            for a, b in fets:
+            for a, b, *_ in fets:
                 f.write(f"{AVUI}\ttema\t{d.get('titol', '')}: {a}\t{b}\t{d.get('carpeta', '')}\n")
     except OSError:
         pass
@@ -2971,7 +3008,6 @@ def normalitza_numeros_tots():
                 fets.append(d)
                 if d.get('nas_t') == abans:
                     d['nas_t'] = firma_temes(d['temes'])    # el format nou no vol dir que hagis canviat els temes
-                d.pop('fmt_m', None)        # els arxius es tornen a mirar amb el seu disc
         if fets:
             desa('discs.json', discs)
             log(f"Números de pista: {len(fets)} discos passen de «101, 102…» a «Disc 1 01»: "
@@ -3110,7 +3146,8 @@ def revisa_falten(n=150):
                 if x and len(x['temes']) == len(d.get('temes') or []):
                     # només el títol dels temes corregits; la resta (estrelles que hagis posat mentrestant) es queda
                     for t, u in zip(d['temes'], x['temes']):
-                        if len(t) > 1 and len(u) > 1 and t[1] != u[1] and [t[1], u[1]] in x['temes_corregits']:
+                        if len(t) > 1 and len(u) > 1 and t[1] != u[1] \
+                                and any(list(c[:2]) == [t[1], u[1]] for c in x['temes_corregits']):
                             t[1] = u[1]
                     d['temes_corregits'] = (d.get('temes_corregits') or []) + x['temes_corregits']
                     if d.get('nas_t') == x['nas_t0']:
