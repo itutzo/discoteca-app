@@ -1098,17 +1098,23 @@ def arxius_sense_format(d, arrel):
     ruta = os.path.join(arrel, c or '')
     if not m or not os.path.isdir(ruta):
         return []
-    art, tit = N(comu.art_arxius(m.group(1).strip())), N(m.group(3).strip())
+    pref = N(comu.art_arxius(m.group(1).strip())) + N(m.group(3).strip())
     out = []
     for root, _, files in os.walk(ruta):
         for f in files:
             if os.path.splitext(f)[1].lower() not in EXT:
                 continue
             base = os.path.splitext(f)[0]
-            x = FORMAT_CD.match(base) or FORMAT.match(base)
-            if not x or N(x.group(1)) != art or N(x.group(2)) != tit:
+            # «Artista - Títol - [Disc N - ]NN - Cançó»: es prova cada « - » com a final d'«Artista - Títol», perquè
+            # el títol del tema pot començar amb números («07 - 20 - 20 Faith», «03 - 10 Days Late»)
+            bo = any(N(base[:x.start()]) == pref and FORMAT_RESTA.match(base[x.end():])
+                     for x in re.finditer(r'\s+[-–—]\s+', base))
+            if not bo:
                 out.append(os.path.relpath(os.path.join(root, f), ruta))
     return out
+
+
+FORMAT_RESTA = re.compile(r'^(?:Disc\s*\d{1,2}\s+[-–—]\s+)?\d{2,3}\s+[-–—]\s+\S', re.I)
 
 
 def qualitat_carpeta(ruta):
