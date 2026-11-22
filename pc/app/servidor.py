@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
                                 if d.get(c):
                                     rec[c] = d[c]
                             reanomena = comu.marca_reanomena(d, rec)
-                            discs[i] = rec
+                            discs[i] = comu.conserva_interns(d, rec)     # les marques del programa no es perden (22/11/2026)
                             break
                     else:
                         discs.append(rec)
