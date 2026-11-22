@@ -1012,6 +1012,222 @@ def treu_formats_repetits(discs, arrel, mtimes):
     return canvi
 
 
+# ---------- Guardià del format del NAS (norma fixa, 22/11/2026) ----------
+# L'Ignasi havia demanat moltes vegades que totes les carpetes siguin «Artista - Any - Títol» i tots els arxius
+# «Artista - Títol - 01 - Cançó». Fallava perquè cada camí de reanomenar depenia d'una marca d'un sol cop
+# («ident_temes», «art_id3», «dg_ok»...) que es perdia si es desava la fitxa des de la pàgina, i perquè una carpeta
+# copiada de nou d'un disc que ja hi era quedava ignorada per sempre. El guardià no depèn de cap marca: a cada
+# execució amb el NAS connectat compara TOTES les carpetes i arxius amb el format a partir de les dades de la
+# fitxa, arregla el que pot i escriu dades/format_nas_informe.txt amb el que no.
+
+def nom_esperat(d, artistes):
+    """El nom «Artista - Any - Títol» que ha de dur la carpeta segons la fitxa, o None si la fitxa encara no té
+    l'artista, l'any o el títol (o és la carpeta «Varios» de cançons soltes)."""
+    art_nom = (artistes.get(str(d.get('artista')), '') or '').strip()
+    any_ = str(d.get('any') or '').strip()
+    tit = (d.get('titol') or '').strip()
+    if not art_nom or not tit or not re.match(r'^\d{4}$', any_) or re.match(r'^\d{4}$', art_nom) \
+            or cancons_soltes(art_nom, tit) or N(art_nom) in VARIOS and N(tit) in VARIOS:
+        return None
+    art = comu.art_carpeta(nom_carpeta(art_nom))
+    tit = majuscules(nom_carpeta(tit))
+    if not art or not tit:
+        return None
+    return f'{art} - {any_} - {tit}'
+
+
+def identificat(d):
+    """La fitxa ja s'ha trobat a internet (Discogs o MusicBrainz): les seves dades valen per anomenar la carpeta."""
+    f = d.get('fonts') or {}
+    return bool(f.get('Discogs') or f.get('MusicBrainz'))
+
+
+def guardia_carpetes(discs, arrel, mtimes, artistes, informe):
+    """Carpetes que no tenen el format «Artista - Any - Títol»: si la fitxa ja està identificada i té l'artista,
+    l'any i el títol, la carpeta passa a aquest nom (sense dependre de cap marca). També les carpetes amb format
+    on el programa ha corregit l'artista de la fitxa amb Discogs («Jack Endino - 1992 - Endino's Earthworm» ->
+    «Endino's Earthworm - 1992 - Endino's Earthworm»). El que no es pot arreglar va a l'informe. Torna quants
+    canvis ha fet."""
+    canvi = 0
+    for d in discs:
+        c = d.get('carpeta')
+        if c not in mtimes:
+            continue
+        m = CARPETA.match(c)
+        art_nom = artistes.get(str(d.get('artista')), '')
+        if m:
+            # carpeta amb format: només si l'artista de la carpeta és el d'abans d'una correcció del programa
+            if not (d.get('artista_abans') and 'artista' in (d.get('auto') or [])
+                    and N(comu.nom_net(m.group(1), artista=True)[0]) == N(comu.nom_net(d['artista_abans'], artista=True)[0])
+                    and N(d['artista_abans']) != N(art_nom)):
+                continue
+        if cancons_soltes(art_nom, d.get('titol') or '') or N(c) in VARIOS:
+            continue
+        nou = nom_esperat(d, artistes)
+        if not identificat(d) or not nou:
+            falta = [x for x, v in (('artista', art_nom and not re.match(r'^\d{4}$', art_nom.strip())),
+                                     ('any', re.match(r'^\d{4}$', str(d.get('any') or '').strip())),
+                                     ('títol', d.get('titol')), ('trobar-lo a Discogs o MusicBrainz', identificat(d))) if not v]
+            informe.append(f'Carpeta sense el format: «{c}» (a la fitxa li falta: {", ".join(falta)})')
+            continue
+        if nou == c:
+            continue
+        if nou.lower() != c.lower() and os.path.exists(os.path.join(arrel, nou)):
+            informe.append(f'Carpeta sense el format: «{c}» (ja hi ha una carpeta «{nou}»)')
+            continue
+        try:
+            os.rename(os.path.join(arrel, c), os.path.join(arrel, nou))
+        except OSError as e:
+            log(f'  NAS: ara no puc reanomenar «{c}» ({e}); s\'hi tornarà a provar')
+            informe.append(f'Carpeta sense el format: «{c}» (no s\'ha pogut reanomenar: {e})')
+            continue
+        d['carpeta'] = nou
+        for k in ('fmt_m', 'ident_temes'):
+            d.pop(k, None)
+        mtimes[nou] = mtimes.pop(c)
+        canvi += 1
+        log(f'  NAS: carpeta «{c}» reanomenada a «{nou}» (guardià del format, amb les dades de la fitxa)')
+    return canvi
+
+
+def arxius_sense_format(d, arrel):
+    """Els arxius de música de la carpeta que no tenen el format «Artista - Títol - 01 - Cançó» (o «Disc 2 - 01»)
+    amb l'artista i el títol de la carpeta. Només mira els noms."""
+    c = d.get('carpeta')
+    m = CARPETA.match(c or '')
+    ruta = os.path.join(arrel, c or '')
+    if not m or not os.path.isdir(ruta):
+        return []
+    pref = N(comu.art_arxius(m.group(1).strip())) + N(m.group(3).strip())
+    out = []
+    for root, _, files in os.walk(ruta):
+        for f in files:
+            if os.path.splitext(f)[1].lower() not in EXT:
+                continue
+            base = os.path.splitext(f)[0]
+            # «Artista - Títol - [Disc N - ]NN - Cançó»: es prova cada « - » com a final d'«Artista - Títol», perquè
+            # el títol del tema pot començar amb números («07 - 20 - 20 Faith», «03 - 10 Days Late»)
+            bo = any(N(base[:x.start()]) == pref and FORMAT_RESTA.match(base[x.end():])
+                     for x in re.finditer(r'\s+[-–—]\s+', base))
+            if not bo:
+                out.append(os.path.relpath(os.path.join(root, f), ruta))
+    return out
+
+
+FORMAT_RESTA = re.compile(r'^(?:Disc\s*\d{1,2}\s+[-–—]\s+)?\d{2,3}\s+[-–—]\s+\S', re.I)
+
+
+def qualitat_carpeta(ruta):
+    """Mida mitjana per tema dels arxius de música (més gran = més qualitat; FLAC primer). No obre res."""
+    mides, flac = [], 0
+    for root, _, files in os.walk(ruta):
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in EXT:
+                try:
+                    mides.append(os.stat(os.path.join(root, f)).st_size)
+                except OSError:
+                    pass
+                flac += ext in SENSE_PERDUA
+    return (1 if flac and flac * 2 >= len(mides) else 0, sum(mides) / len(mides) if mides else 0)
+
+
+def treu_carpetes_repetides(discs, arrel, mtimes, informe):
+    """Norma de l'Ignasi (05/11/2026): tot el que està repetit al NAS va a «.Paperera duplicats <data>». Un disc
+    copiat de nou quan ja hi era («1992 - Endino's Earthworm» al costat de «Jack Endino - 1992 - Endino's
+    Earthworm»): les fitxes ja s'han ajuntat i la carpeta nova havia quedat a ignorats.carpetes, sense formatar mai.
+    Ara, si té els mateixos temes que la carpeta d'una fitxa, es queda la de més qualitat (FLAC, o arxius un 5 %
+    més grossos per tema) i l'altra va a la paperera. No s'obre cap arxiu. Torna quants canvis ha fet."""
+    ig = llegeix('ignorats.json', {'artistes': [], 'discos': []})
+    ignorades = [c for c in ig.get('carpetes', []) if c in mtimes]
+    if not ignorades:
+        return 0
+    per_temes, claus_fitxa = {}, {}
+    canvi = 0
+    paperera = os.path.join(arrel, f'.Paperera duplicats {AVUI}')
+    for c in ignorades:
+        try:
+            temes_c = temes_de_noms(arxius_de(os.path.join(arrel, c)))
+        except OSError:
+            continue
+        if len(temes_c) < 3:
+            continue
+        claus_c = {comu.TT(t) for t in comu.temes_nets([t[1] for t in temes_c])[0]} - {''}
+        candidats = []
+        for d in discs:
+            cd = d.get('carpeta')
+            if cd not in mtimes or cd == c:
+                continue
+            # per anar ràpid, primer els que comparteixen almenys 3 temes amb la fitxa
+            k = id(d)
+            if k not in claus_fitxa:
+                claus_fitxa[k] = {comu.TT(t) for t in comu.temes_nets([t[1] for t in d.get('temes') or [] if len(t) > 1])[0]} - {''}
+            if len(claus_c & claus_fitxa[k]) < 3:
+                continue
+            if cd not in per_temes:
+                try:
+                    per_temes[cd] = temes_de_noms(arxius_de(os.path.join(arrel, cd)))
+                except OSError:
+                    per_temes[cd] = []
+            if len(per_temes[cd]) == len(temes_c) and temes_equivalents(per_temes[cd], temes_c):
+                candidats.append(d)
+        if len(candidats) != 1:
+            if candidats:
+                informe.append(f'Carpeta repetida sense tocar: «{c}» (s\'assembla a {len(candidats)} carpetes)')
+            continue
+        d = candidats[0]
+        cd = d['carpeta']
+        q_c, q_d = qualitat_carpeta(os.path.join(arrel, c)), qualitat_carpeta(os.path.join(arrel, cd))
+        nova_millor = q_c[0] > q_d[0] or (q_c[0] == q_d[0] and q_c[1] > 1.05 * q_d[1])
+        fora, queda = (cd, c) if nova_millor else (c, cd)
+        desti = os.path.join(paperera, fora)
+        try:
+            os.makedirs(paperera, exist_ok=True)
+            if os.path.exists(desti):
+                desti = f'{desti} ({int(time.time())})'
+            os.rename(os.path.join(arrel, fora), desti)
+        except OSError as e:
+            log(f'  NAS: ara no puc moure la carpeta repetida «{fora}» ({e}); s\'hi tornarà a provar')
+            continue
+        try:
+            with open(os.path.join(comu.DADES, f'duplicats_moguts_{AVUI}.txt'), 'a', encoding='utf-8') as r:
+                r.write(f'{datetime.datetime.now():%H:%M:%S}\tcarpeta repetida\t{fora}\t-> {os.path.relpath(desti, arrel)}'
+                        f'\t(es queda «{queda}», {"més qualitat" if nova_millor else "la de la fitxa"})\n')
+        except OSError:
+            pass
+        mtimes.pop(fora, None)
+        if nova_millor:
+            d['carpeta'] = c
+            for k in ('fmt_m', 'dup_m', 'dfm_m', 'nas_m'):
+                d.pop(k, None)
+        ig['carpetes'] = [x for x in ig.get('carpetes', []) if x != c]
+        canvi += 1
+        log(f'  NAS: «{c}» i «{cd}» són el mateix disc: «{fora}» moguda a «.Paperera duplicats {AVUI}» '
+            f'(es queda «{queda}», {"més qualitat" if nova_millor else "la de la fitxa"})')
+    if canvi:
+        desa('ignorats.json', ig)
+    return canvi
+
+
+def escriu_informe_format(informe, arrel, mtimes, discs):
+    """dades/format_nas_informe.txt: el que el guardià no ha pogut posar al format (es torna a escriure sencer)."""
+    amb_fitxa = {d.get('carpeta') for d in discs}
+    ig = set(llegeix('ignorats.json', {}).get('carpetes', []))
+    sense = sorted(c for c in mtimes if c not in amb_fitxa and c not in ig and not c.startswith('.'))
+    linies = list(informe) + [f'Carpeta sense fitxa: «{c}»' for c in sense]
+    try:
+        with open(os.path.join(comu.DADES, 'format_nas_informe.txt'), 'w', encoding='utf-8') as f:
+            f.write(f'Guardià del format del NAS · {datetime.datetime.now():%Y-%m-%d %H:%M}\n')
+            f.write('\n'.join(linies) + '\n' if linies else 'Totes les carpetes i arxius tenen el format.\n')
+    except OSError:
+        pass
+    n_c = sum(1 for x in linies if x.startswith('Carpeta'))
+    n_a = sum(1 for x in linies if x.startswith('Arxius'))
+    log(f'Guardià del format del NAS: {len(mtimes)} carpetes repassades; ' +
+        (f'{n_c} carpetes i {n_a} carpetes amb arxius encara sense el format (detall a dades\\format_nas_informe.txt)'
+         if linies else 'tot té el format'))
+
+
 def formata_tots():
     """Cada vegada: les carpetes sense l'any passen a «Artista - Any - Títol» (si la fitxa ja té l'any), i els
     arxius de les carpetes noves o canviades, al format «Artista - Disc - 01 - Cançó».
@@ -1023,6 +1239,12 @@ def formata_tots():
         discs = llegeix('discs.json', [])
         mtimes = {e.name: e.stat().st_mtime for e in os.scandir(arrel) if e.is_dir()}
         canvi = total = 0
+        informe = []
+        # guardià (22/11/2026): un disc copiat de nou quan ja hi era (dues carpetes amb els mateixos temes): una a la paperera
+        try:
+            canvi += treu_carpetes_repetides(discs, arrel, mtimes, informe)
+        except Exception as e:
+            log(f'  NAS: error buscant carpetes repetides {e!r}')
         # primer, els arxius repetits (el mateix tema amb dos noms): si no, la carpeta no es pot formatar
         try:
             canvi += treu_copies_arxius(discs, arrel, mtimes)
@@ -1047,6 +1269,8 @@ def formata_tots():
                 continue
             if c not in mtimes or CARPETA.match(c):
                 continue
+            if identificat(d) and nom_esperat(d, artistes):
+                continue        # ja identificat: el guardià hi posa el nom amb les dades de la fitxa (22/11/2026)
             try:
                 v = artista_de_etiquetes(d, arrel, artistes)
             except Exception as e:
@@ -1060,6 +1284,11 @@ def formata_tots():
             if posa_artista_carpeta(d, arrel, artistes) or posa_any_carpeta(d, arrel) or posa_nom_complet(d, arrel, artistes):
                 mtimes[d['carpeta']] = mtimes.pop(c)
                 canvi += 1
+        # guardià (22/11/2026): totes les carpetes sense el format, amb les dades de la fitxa, sense dependre de marques
+        try:
+            canvi += guardia_carpetes(discs, arrel, mtimes, artistes, informe)
+        except Exception as e:
+            log(f'  NAS: error al guardià del format de les carpetes {e!r}')
         # l'artista equivocat («2009») sense cap altre disc: fora
         orfes = vells - {str(d.get('artista')) for d in discs}
         if orfes:
@@ -1103,6 +1332,17 @@ def formata_tots():
                         canvi += 1
                 except Exception as e:
                     log(f'  NAS: error netejant els temes de «{c}» {e!r}')
+        # guardià (22/11/2026): una carpeta amb arxius sense el format es torna a formatar encara que ja s'hagués fet
+        pendents_fmt = set()
+        for d in discs:
+            c = d.get('carpeta')
+            if c in mtimes and CARPETA.match(c) and not cancons_soltes(artistes.get(str(d.get('artista')), ''), d.get('titol') or ''):
+                try:
+                    if arxius_sense_format(d, arrel):
+                        d.pop('fmt_m', None)
+                        pendents_fmt.add(c)
+                except OSError:
+                    pass
         for d in discs:
             c = d.get('carpeta')
             # fmt_v 2: també els discos dobles («Disc 2»); les carpetes ja repassades es tornen a mirar un cop
@@ -1120,10 +1360,24 @@ def formata_tots():
                 elif d.get('nas_m'):
                     d['nas_m'] = mt
             canvi += 1
+        for d in discs:
+            c = d.get('carpeta')
+            if c in pendents_fmt:
+                try:
+                    resten = arxius_sense_format(d, arrel)
+                except OSError:
+                    resten = []
+                if resten:
+                    informe.append(f'Arxius sense el format a «{c}» ({len(resten)}): ' + '; '.join(resten[:5])
+                                   + (' …' if len(resten) > 5 else ''))
         if canvi:
             desa('discs.json', discs)
     if total:
         log(f'NAS: {total} arxius amb el format «Artista - Disc - 01 - Cançó»')
+    try:
+        escriu_informe_format(informe, arrel, mtimes, discs)
+    except Exception as e:
+        log(f'  NAS: error escrivint l\'informe del format {e!r}')
 
 
 def corregeix_artista(d, nou, vell, artistes):

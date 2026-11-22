@@ -584,6 +584,25 @@ def temes_aparellats(meus, seus):
     return len(aparella_temes(meus, seus))
 
 
+# Camps que la pàgina (PC i mòbil) escriu sencers en desar una fitxa: tots els altres són del programa (marques
+# internes com «ident_temes», «dg_ok», «art_id3», «fmt_m», «edicions», «versio», «falten»...). Abans, desar una
+# fitxa des de la pàgina (per exemple, posar-hi la nota) les esborrava, i una carpeta identificada amb el NAS
+# desconnectat ja no es reanomenava mai (8 discos del 17/11/2026). Norma fixa del 22/11/2026: es conserven sempre.
+CAMPS_PAGINA = {'id', 'artista', 'titol', 'any', 'barcode', 'catno', 'segell', 'edicio', 'classificacio', 'clasamg',
+                'genere', 'estil', 'qualitat', 'bitrate', 'usuari', 'data', 'notes', 'suport', 'temes', 'interprets',
+                'caratula', 'cv', 'estat', 'updatedAt', 'reintenta', 'proc', 'no_trobat', 'fonts', 'auto', 'carpeta',
+                'discogs_release', 'discogs_master', 'completat', 'caratules', 'megasearch'}
+
+
+def conserva_interns(vell, nou):
+    """La fitxa que envia la pàgina (`nou`) substitueix la que hi havia (`vell`), però els camps interns del
+    programa que la pàgina no coneix es conserven. Torna `nou`."""
+    for k, v in (vell or {}).items():
+        if k not in CAMPS_PAGINA and k not in nou:
+            nou[k] = v
+    return nou
+
+
 def marca_reanomena(abans, d):
     """L'Ignasi ha canviat a mà el títol o l'artista: la carpeta del NAS i els arxius de dins s'han de dir igual."""
     if abans and d.get('carpeta') and (str(abans.get('titol') or '').strip() != str(d.get('titol') or '').strip()
